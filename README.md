@@ -87,28 +87,29 @@ A native macOS music player built with SwiftUI. Your music library is just folde
 ```
 MusicLibrary/
 ├── README.md
-├── MusicLibraryApp.swift
-├── ContentView.swift
-├── Models.swift
-├── LibraryManager.swift
-├── AudioPlayerManager.swift
-├── PlaybackClock.swift
-├── SongMetadataStore.swift
-├── MetadataEditsStore.swift
-├── SongListView.swift
-├── SongEditSheet.swift
-├── PlayerBar.swift
-├── QueueView.swift
-├── MenuBarPlayerView.swift
-├── MarqueeText.swift
-├── ColumnResizeHandle.swift
-├── PlayerControlButton.swift
-├── BadgedIcon.swift
-├── NotificationManager.swift
-├── AppSettings.swift
-├── AppFontScale.swift
-├── PreferencesView.swift
-└── UIState.swift
+└── Code/
+    ├── MusicLibraryApp.swift
+    ├── ContentView.swift
+    ├── Models.swift
+    ├── LibraryManager.swift
+    ├── AudioPlayerManager.swift
+    ├── PlaybackClock.swift
+    ├── SongMetadataStore.swift
+    ├── MetadataEditsStore.swift
+    ├── SongListView.swift
+    ├── SongEditSheet.swift
+    ├── PlayerBar.swift
+    ├── QueueView.swift
+    ├── MenuBarPlayerView.swift
+    ├── MarqueeText.swift
+    ├── ColumnResizeHandle.swift
+    ├── PlayerControlButton.swift
+    ├── BadgedIcon.swift
+    ├── NotificationManager.swift
+    ├── AppSettings.swift
+    ├── AppFontScale.swift
+    ├── PreferencesView.swift
+    └── UIState.swift
 ```
 
 That's every `.swift` file in the project (22 total) plus this README. If you have an actual `.xcodeproj` folder from Xcode, upload that too — GitHub will show it as a folder alongside these files.
