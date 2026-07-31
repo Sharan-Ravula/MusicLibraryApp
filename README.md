@@ -87,6 +87,7 @@ A native macOS music player built with SwiftUI. Your music library is just folde
 ```
 MusicLibrary/
 ├── README.md
+├── MusicLibrary.xcodeproj/
 └── Code/
     ├── MusicLibraryApp.swift
     ├── ContentView.swift
