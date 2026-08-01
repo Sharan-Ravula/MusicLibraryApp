@@ -128,9 +128,21 @@ final class AudioPlayerManager: NSObject, ObservableObject {
 
     func playPrevious() {
         guard let index = currentIndex else { return }
+
+        // If you're a few seconds into the song, "previous" restarts the
+        // current song rather than skipping back — matches how most music
+        // apps behave, and this is also what makes it do something sensible
+        // (instead of nothing) when there's no earlier track to jump to.
+        if clock.currentTime > 3 {
+            seek(to: 0)
+            return
+        }
+
         let prevIndex = index - 1
         if currentPlaylistSongs.indices.contains(prevIndex) {
             playAtIndex(prevIndex)
+        } else {
+            seek(to: 0)
         }
     }
 
