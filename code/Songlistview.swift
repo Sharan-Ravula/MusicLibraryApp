@@ -1,23 +1,77 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 enum SongViewMode {
     case list, tile
 }
 
 enum SongSortColumn: Hashable {
-    case title, artist, album, duration, bitrate, dateAdded
+    case title, artist, album, duration, bitrate, dateAdded, channels, sampleRate, bitsPerSample, fileSize, format
+
+    var label: String {
+        switch self {
+        case .title: return "Title"
+        case .artist: return "Artist"
+        case .album: return "Album"
+        case .duration: return "Duration"
+        case .bitrate: return "Bitrate"
+        case .dateAdded: return "Date Added"
+        case .channels: return "Channels"
+        case .sampleRate: return "Sample Rate"
+        case .bitsPerSample: return "Bit Depth"
+        case .fileSize: return "File Size"
+        case .format: return "Format"
+        }
+    }
 }
 
-/// Which optional columns are shown in list view. Title always shows.
+/// Which optional columns are shown in list view, and in what order.
+/// Title always shows first and isn't part of this reordering — it's the
+/// anchor column, similar to a frozen "Name" column in Finder/Excel.
 enum OptionalColumn: String, CaseIterable, Identifiable {
     case artist = "Artist"
     case album = "Album"
     case duration = "Duration"
     case bitrate = "Bitrate"
+    case format = "Format"
+    case sampleRate = "Sample Rate"
+    case bitsPerSample = "Bit Depth"
+    case channels = "Channels"
+    case fileSize = "File Size"
     case dateAdded = "Date Added"
 
     var id: String { rawValue }
+
+    var sortColumn: SongSortColumn {
+        switch self {
+        case .artist: return .artist
+        case .album: return .album
+        case .duration: return .duration
+        case .bitrate: return .bitrate
+        case .format: return .format
+        case .sampleRate: return .sampleRate
+        case .bitsPerSample: return .bitsPerSample
+        case .channels: return .channels
+        case .fileSize: return .fileSize
+        case .dateAdded: return .dateAdded
+        }
+    }
+
+    var widthRange: (min: CGFloat, max: CGFloat) {
+        switch self {
+        case .artist: return (60, 260)
+        case .album: return (60, 260)
+        case .duration: return (50, 90)
+        case .bitrate: return (60, 100)
+        case .format: return (50, 100)
+        case .sampleRate: return (60, 110)
+        case .bitsPerSample: return (60, 100)
+        case .channels: return (60, 100)
+        case .fileSize: return (60, 110)
+        case .dateAdded: return (70, 140)
+        }
+    }
 }
 
 struct SongListView: View {
@@ -32,14 +86,27 @@ struct SongListView: View {
     @State private var sortColumn: SongSortColumn?
     @State private var sortAscending = true
     @State private var editingSong: Song?
+    @State private var draggedSong: Song?
+    @State private var draggedColumn: OptionalColumn?
     @State private var visibleColumns: Set<OptionalColumn> = Set(OptionalColumn.allCases)
+    /// The display order of optional columns — drag a header to reorder.
+    @State private var columnOrder: [OptionalColumn] = OptionalColumn.allCases
 
     @State private var titleColumnWidth: CGFloat = 220
     @State private var artistColumnWidth: CGFloat = 130
     @State private var albumColumnWidth: CGFloat = 130
     @State private var durationColumnWidth: CGFloat = 80
     @State private var bitrateColumnWidth: CGFloat = 90
+    @State private var formatColumnWidth: CGFloat = 80
+    @State private var sampleRateColumnWidth: CGFloat = 90
+    @State private var bitsPerSampleColumnWidth: CGFloat = 80
+    @State private var channelsColumnWidth: CGFloat = 80
+    @State private var fileSizeColumnWidth: CGFloat = 90
     @State private var dateAddedColumnWidth: CGFloat = 110
+
+    private var orderedVisibleColumns: [OptionalColumn] {
+        columnOrder.filter { visibleColumns.contains($0) }
+    }
 
     var body: some View {
         let songs = displayedSongs
@@ -66,7 +133,7 @@ struct SongListView: View {
             if viewMode == .list {
                 ToolbarItem {
                     Menu {
-                        ForEach(OptionalColumn.allCases) { column in
+                        ForEach(columnOrder) { column in
                             Button {
                                 if visibleColumns.contains(column) {
                                     visibleColumns.remove(column)
@@ -85,7 +152,7 @@ struct SongListView: View {
                     } label: {
                         Label("Columns", systemImage: "slider.horizontal.3")
                     }
-                    .help("Show or Hide Columns")
+                    .help("Show or Hide Columns — drag a column header to reorder them")
                 }
             }
             ToolbarItem {
@@ -139,26 +206,32 @@ struct SongListView: View {
                                 songRow(song, in: songs)
                                     .listRowInsets(EdgeInsets())
                                     .listRowSeparator(.hidden)
-                            }
-                            .onMove { indices, newOffset in
-                                guard sortColumn == nil else { return }
-                                var order = songs.map { $0.url.lastPathComponent }
-                                order.move(fromOffsets: indices, toOffset: newOffset)
-                                library.saveCustomOrder(order, for: playlist)
+                                    // List's native drag-to-reorder (.onMove)
+                                    // doesn't reliably work here because this
+                                    // List is nested inside a horizontal
+                                    // ScrollView (needed so wide columns
+                                    // scroll instead of distorting the
+                                    // window) — the outer scroll view's own
+                                    // gesture handling interferes with the
+                                    // List's internal drag-session. Handling
+                                    // it manually via onDrag/onDrop sidesteps
+                                    // that entirely.
+                                    .onDrag {
+                                        draggedSong = song
+                                        return NSItemProvider(object: song.id.absoluteString as NSString)
+                                    }
+                                    .onDrop(of: [.text], isTargeted: nil) { _ in
+                                        guard sortColumn == nil, let draggedSong, draggedSong != song else { return false }
+                                        reorder(dragged: draggedSong, onto: song, in: songs)
+                                        self.draggedSong = nil
+                                        return true
+                                    }
                             }
                         }
                         .listStyle(.plain)
-                        .safeAreaInset(edge: .bottom) {
-                            Color.clear.frame(height: 110)
-                        }
                         .frame(width: max(totalTableWidth, geo.size.width))
 
-                        if sortColumn != nil {
-                            Text("Sorted by column — click the header again to clear sorting and drag songs manually.")
-                                .appCaptionFont()
-                                .foregroundStyle(.secondary)
-                                .padding(6)
-                        }
+                        sortStatusBar
                     }
                     // Never narrower than the viewport (fills nicely when columns
                     // are compact), but can grow wider and scroll instead of
@@ -175,33 +248,22 @@ struct SongListView: View {
             // itself — so nothing truncates, but nothing grows bigger than
             // it needs to either.
             try? await Task.sleep(nanoseconds: 400_000_000)
-            titleColumnWidth = idealWidth(for: songs.map { displayTitle(for: $0) } + ["Title"], min: 100, max: 400)
-            artistColumnWidth = idealWidth(for: songs.map { displayArtist(for: $0) } + ["Artist"], min: 60, max: 260)
-            albumColumnWidth = idealWidth(for: songs.map { displayAlbum(for: $0) } + ["Album"], min: 60, max: 260)
-            durationColumnWidth = idealWidth(
-                for: songs.map { formatDuration(metadataStore.metadata(for: $0)?.duration) } + ["Duration"],
-                min: 50, max: 90
-            )
-            bitrateColumnWidth = idealWidth(
-                for: songs.map { formatBitrate(metadataStore.metadata(for: $0)?.bitrateKbps) } + ["Bitrate"],
-                min: 60, max: 100
-            )
-            dateAddedColumnWidth = idealWidth(
-                for: songs.map { formatDate(metadataStore.metadata(for: $0)?.dateAdded) } + ["Date Added"],
-                min: 70, max: 140
-            )
+            titleColumnWidth = idealWidth(for: songs.map { displayTitle(for: $0) } + ["Title"], min: 100, max: 700)
+            for column in OptionalColumn.allCases {
+                let values = songs.map { cellText(for: column, song: $0) } + [column.rawValue]
+                let range = column.widthRange
+                widthBinding(for: column).wrappedValue = idealWidth(for: values, min: range.min, max: range.max)
+            }
         }
     }
 
     /// Sum of every visible column's width plus its handle/gap and the
     /// leading icon gutter — the table's true content width.
     private var totalTableWidth: CGFloat {
-        var width: CGFloat = 20 + titleColumnWidth + 9
-        if visibleColumns.contains(.artist) { width += artistColumnWidth + 9 }
-        if visibleColumns.contains(.album) { width += albumColumnWidth + 9 }
-        if visibleColumns.contains(.duration) { width += durationColumnWidth + 9 }
-        if visibleColumns.contains(.bitrate) { width += bitrateColumnWidth + 9 }
-        if visibleColumns.contains(.dateAdded) { width += dateAddedColumnWidth + 9 }
+        var width: CGFloat = 38 + titleColumnWidth + 9
+        for column in orderedVisibleColumns {
+            width += widthBinding(for: column).wrappedValue + 9
+        }
         return width + 20 // horizontal padding
     }
 
@@ -215,38 +277,71 @@ struct SongListView: View {
         return Swift.min(Swift.max(widest + 24, min), max)
     }
 
+    /// Maps each optional column to its own @State width binding.
+    private func widthBinding(for column: OptionalColumn) -> Binding<CGFloat> {
+        switch column {
+        case .artist: return $artistColumnWidth
+        case .album: return $albumColumnWidth
+        case .duration: return $durationColumnWidth
+        case .bitrate: return $bitrateColumnWidth
+        case .format: return $formatColumnWidth
+        case .sampleRate: return $sampleRateColumnWidth
+        case .bitsPerSample: return $bitsPerSampleColumnWidth
+        case .channels: return $channelsColumnWidth
+        case .fileSize: return $fileSizeColumnWidth
+        case .dateAdded: return $dateAddedColumnWidth
+        }
+    }
+
+    private func cellText(for column: OptionalColumn, song: Song) -> String {
+        let meta = metadataStore.metadata(for: song)
+        switch column {
+        case .artist: return displayArtist(for: song)
+        case .album: return displayAlbum(for: song)
+        case .duration: return formatDuration(meta?.duration)
+        case .bitrate: return formatBitrate(meta?.bitrateKbps)
+        case .format: return song.url.pathExtension.uppercased()
+        case .sampleRate: return formatSampleRate(meta?.sampleRateHz)
+        case .bitsPerSample: return formatBitsPerSample(meta?.bitsPerSample)
+        case .channels: return formatChannels(meta?.channels)
+        case .fileSize: return formatFileSize(meta?.fileSizeBytes)
+        case .dateAdded: return formatDate(meta?.dateAdded)
+        }
+    }
+
+    /// Moves a dropped column to sit where it was dropped.
+    private func reorderColumns(dragged: OptionalColumn, onto target: OptionalColumn) {
+        guard let fromIndex = columnOrder.firstIndex(of: dragged),
+              let toIndex = columnOrder.firstIndex(of: target) else { return }
+        let moved = columnOrder.remove(at: fromIndex)
+        columnOrder.insert(moved, at: toIndex)
+    }
+
     private var headerRow: some View {
         HStack(spacing: 0) {
-            Text("").frame(width: 20)
+            Text("").frame(width: 38)
 
             columnHeader("Title", .title)
                 .frame(width: titleColumnWidth, alignment: .leading)
-            ColumnResizeHandle(width: $titleColumnWidth, minWidth: 100, maxWidth: 400)
+            ColumnResizeHandle(width: $titleColumnWidth, minWidth: 100, maxWidth: 700)
 
-            if visibleColumns.contains(.artist) {
-                columnHeader("Artist", .artist)
-                    .frame(width: artistColumnWidth, alignment: .center)
-                ColumnResizeHandle(width: $artistColumnWidth, minWidth: 60, maxWidth: 260)
-            }
-            if visibleColumns.contains(.album) {
-                columnHeader("Album", .album)
-                    .frame(width: albumColumnWidth, alignment: .center)
-                ColumnResizeHandle(width: $albumColumnWidth, minWidth: 60, maxWidth: 260)
-            }
-            if visibleColumns.contains(.duration) {
-                columnHeader("Duration", .duration)
-                    .frame(width: durationColumnWidth, alignment: .center)
-                ColumnResizeHandle(width: $durationColumnWidth, minWidth: 50, maxWidth: 90)
-            }
-            if visibleColumns.contains(.bitrate) {
-                columnHeader("Bitrate", .bitrate)
-                    .frame(width: bitrateColumnWidth, alignment: .center)
-                ColumnResizeHandle(width: $bitrateColumnWidth, minWidth: 60, maxWidth: 100)
-            }
-            if visibleColumns.contains(.dateAdded) {
-                columnHeader("Date Added", .dateAdded)
-                    .frame(width: dateAddedColumnWidth, alignment: .center)
-                ColumnResizeHandle(width: $dateAddedColumnWidth, minWidth: 70, maxWidth: 140)
+            ForEach(orderedVisibleColumns) { column in
+                let range = column.widthRange
+                columnHeader(column.rawValue, column.sortColumn)
+                    .frame(width: widthBinding(for: column).wrappedValue, alignment: .center)
+                    .contentShape(Rectangle())
+                    .onDrag {
+                        draggedColumn = column
+                        return NSItemProvider(object: column.rawValue as NSString)
+                    }
+                    .onDrop(of: [.text], isTargeted: nil) { _ in
+                        guard let draggedColumn, draggedColumn != column else { return false }
+                        reorderColumns(dragged: draggedColumn, onto: column)
+                        self.draggedColumn = nil
+                        return true
+                    }
+                    .help("Click to sort by \(column.rawValue) • Drag to reorder columns")
+                ColumnResizeHandle(width: widthBinding(for: column), minWidth: range.min, maxWidth: range.max)
             }
 
             Spacer(minLength: 0)
@@ -282,58 +377,64 @@ struct SongListView: View {
         }
     }
 
+    /// Explains what's currently happening with sorting, and gives a direct
+    /// way to reset it — a plain caption alone wasn't a clear or actionable
+    /// way to communicate "sorting is on, and it's why drag-reorder is off."
+    @ViewBuilder
+    private var sortStatusBar: some View {
+        if let sortColumn {
+            HStack(spacing: 8) {
+                Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
+                    .appCaption2Font()
+                    .foregroundStyle(Color.accentColor)
+                Text("Sorted by \(sortColumn.label) — manual drag reordering is off while a sort is active.")
+                    .appCaptionFont()
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Button {
+                    self.sortColumn = nil
+                    self.sortAscending = true
+                } label: {
+                    Label("Clear Sort", systemImage: "xmark.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .appCaptionFont()
+                .foregroundStyle(Color.accentColor)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(.bar)
+        }
+    }
+
     private func songRow(_ song: Song, in songs: [Song]) -> some View {
-        let meta = metadataStore.metadata(for: song)
-        return HStack(spacing: 0) {
-            Image(systemName: player.currentSong == song ? "speaker.wave.2.fill" : "music.note")
-                .foregroundStyle(player.currentSong == song ? Color.accentColor : .secondary)
-                .frame(width: 20)
+        HStack(spacing: 0) {
+            HStack(spacing: 4) {
+                // A visual cue that this row can be dragged to reorder —
+                // only shown when that's actually possible (unsorted). Click
+                // and drag anywhere on the row itself to reorder — this icon
+                // is just a hint, not the only draggable spot.
+                if sortColumn == nil {
+                    Image(systemName: "line.3.horizontal")
+                        .appCaption2Font()
+                        .foregroundStyle(.secondary.opacity(0.5))
+                }
+                Image(systemName: player.currentSong == song ? "speaker.wave.2.fill" : "music.note")
+                    .foregroundStyle(player.currentSong == song ? Color.accentColor : .secondary)
+            }
+            .frame(width: 38)
 
             MarqueeText(text: displayTitle(for: song), size: 13, alignment: .leading)
                 .frame(width: titleColumnWidth, alignment: .leading)
             Color.clear.frame(width: 9)
 
-            if visibleColumns.contains(.artist) {
-                Text(displayArtist(for: song))
-                    .appCaptionFont()
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .frame(width: artistColumnWidth, alignment: .center)
-                Color.clear.frame(width: 9)
-            }
-
-            if visibleColumns.contains(.album) {
-                Text(displayAlbum(for: song))
-                    .appCaptionFont()
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .frame(width: albumColumnWidth, alignment: .center)
-                Color.clear.frame(width: 9)
-            }
-
-            if visibleColumns.contains(.duration) {
-                Text(formatDuration(meta?.duration))
+            ForEach(orderedVisibleColumns) { column in
+                Text(cellText(for: column, song: song))
                     .appCaptionFont()
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
-                    .frame(width: durationColumnWidth, alignment: .center)
-                Color.clear.frame(width: 9)
-            }
-
-            if visibleColumns.contains(.bitrate) {
-                Text(formatBitrate(meta?.bitrateKbps))
-                    .appCaptionFont()
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    .frame(width: bitrateColumnWidth, alignment: .center)
-                Color.clear.frame(width: 9)
-            }
-
-            if visibleColumns.contains(.dateAdded) {
-                Text(formatDate(meta?.dateAdded))
-                    .appCaptionFont()
-                    .foregroundStyle(.secondary)
-                    .frame(width: dateAddedColumnWidth, alignment: .center)
+                    .lineLimit(1)
+                    .frame(width: widthBinding(for: column).wrappedValue, alignment: .center)
                 Color.clear.frame(width: 9)
             }
 
@@ -354,6 +455,17 @@ struct SongListView: View {
         .contextMenu {
             songContextMenu(for: song, in: songs)
         }
+    }
+
+    /// Moves the dragged song to sit right where it was dropped, and
+    /// persists the new order.
+    private func reorder(dragged: Song, onto target: Song, in songs: [Song]) {
+        guard let fromIndex = songs.firstIndex(of: dragged),
+              let toIndex = songs.firstIndex(of: target) else { return }
+        var order = songs.map { $0.url.lastPathComponent }
+        let moved = order.remove(at: fromIndex)
+        order.insert(moved, at: toIndex)
+        library.saveCustomOrder(order, for: playlist)
     }
 
     // MARK: - Tile view
@@ -479,29 +591,39 @@ struct SongListView: View {
                 return (metadataStore.metadata(for: a)?.duration ?? 0) < (metadataStore.metadata(for: b)?.duration ?? 0)
             case .bitrate:
                 return (metadataStore.metadata(for: a)?.bitrateKbps ?? 0) < (metadataStore.metadata(for: b)?.bitrateKbps ?? 0)
+            case .format:
+                return a.url.pathExtension.localizedCaseInsensitiveCompare(b.url.pathExtension) == .orderedAscending
             case .dateAdded:
                 let dateA = metadataStore.metadata(for: a)?.dateAdded ?? .distantPast
                 let dateB = metadataStore.metadata(for: b)?.dateAdded ?? .distantPast
                 return dateA < dateB
+            case .channels:
+                return (metadataStore.metadata(for: a)?.channels ?? 0) < (metadataStore.metadata(for: b)?.channels ?? 0)
+            case .sampleRate:
+                return (metadataStore.metadata(for: a)?.sampleRateHz ?? 0) < (metadataStore.metadata(for: b)?.sampleRateHz ?? 0)
+            case .bitsPerSample:
+                return (metadataStore.metadata(for: a)?.bitsPerSample ?? 0) < (metadataStore.metadata(for: b)?.bitsPerSample ?? 0)
+            case .fileSize:
+                return (metadataStore.metadata(for: a)?.fileSizeBytes ?? 0) < (metadataStore.metadata(for: b)?.fileSizeBytes ?? 0)
             }
         }
         return ascending ? result : result.reversed()
     }
 
     private func displayTitle(for song: Song) -> String {
-        if let t = edits.edit(for: song)?.title, !t.isEmpty { return t }
-        if let t = metadataStore.metadata(for: song)?.title, !t.isEmpty { return t }
-        return song.title
+        if let t = edits.edit(for: song)?.title, !t.isEmpty { return t.normalizedForDisplay }
+        if let t = metadataStore.metadata(for: song)?.title, !t.isEmpty { return t.normalizedForDisplay }
+        return song.title.normalizedForDisplay
     }
 
     private func displayArtist(for song: Song) -> String {
-        if let a = edits.edit(for: song)?.artist, !a.isEmpty { return a }
-        return metadataStore.metadata(for: song)?.artist ?? ""
+        if let a = edits.edit(for: song)?.artist, !a.isEmpty { return a.normalizedForDisplay }
+        return (metadataStore.metadata(for: song)?.artist ?? "").normalizedForDisplay
     }
 
     private func displayAlbum(for song: Song) -> String {
-        if let a = edits.edit(for: song)?.album, !a.isEmpty { return a }
-        return metadataStore.metadata(for: song)?.album ?? ""
+        if let a = edits.edit(for: song)?.album, !a.isEmpty { return a.normalizedForDisplay }
+        return (metadataStore.metadata(for: song)?.album ?? "").normalizedForDisplay
     }
 
     private func effectiveArtwork(for song: Song) -> NSImage? {
@@ -525,5 +647,32 @@ struct SongListView: View {
     private func formatDate(_ date: Date?) -> String {
         guard let date else { return "—" }
         return date.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    private func formatChannels(_ channels: Int?) -> String {
+        guard let channels else { return "—" }
+        switch channels {
+        case 1: return "Mono"
+        case 2: return "Stereo"
+        default: return "\(channels) ch"
+        }
+    }
+
+    private func formatSampleRate(_ rate: Double?) -> String {
+        guard let rate, rate > 0 else { return "—" }
+        return String(format: "%.1f kHz", rate / 1000)
+    }
+
+    private func formatBitsPerSample(_ bits: Int?) -> String {
+        guard let bits, bits > 0 else { return "—" }
+        return "\(bits)-bit"
+    }
+
+    private func formatFileSize(_ bytes: Int64?) -> String {
+        guard let bytes else { return "—" }
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowedUnits = [.useMB, .useKB, .useGB]
+        return formatter.string(fromByteCount: bytes)
     }
 }

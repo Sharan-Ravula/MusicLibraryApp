@@ -78,6 +78,10 @@ struct QueueView: View {
                 .listStyle(.plain)
             }
         }
+        .background(
+            Color(nsColor: .windowBackgroundColor)
+                .allowsHitTesting(false)
+        )
     }
 
     @ViewBuilder
@@ -105,8 +109,8 @@ struct QueueView: View {
     }
 
     private func displayTitle(for song: Song) -> String {
-        if let t = edits.edit(for: song)?.title, !t.isEmpty { return t }
-        if let t = metadataStore.metadata(for: song)?.title, !t.isEmpty { return t }
-        return song.title
+        if let t = edits.edit(for: song)?.title, !t.isEmpty { return t.normalizedForDisplay }
+        if let t = metadataStore.metadata(for: song)?.title, !t.isEmpty { return t.normalizedForDisplay }
+        return song.title.normalizedForDisplay
     }
 }

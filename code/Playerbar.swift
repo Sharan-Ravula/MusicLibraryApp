@@ -3,64 +3,15 @@ import AppKit
 
 struct PlayerBar: View {
     @EnvironmentObject private var player: AudioPlayerManager
-    @EnvironmentObject private var clock: PlaybackClock
     @EnvironmentObject private var metadataStore: SongMetadataStore
     @EnvironmentObject private var edits: MetadataEditsStore
     @EnvironmentObject private var uiState: UIState
 
-    /// Both side zones use this same fixed width, so a plain HStack with
-    /// Spacers on either side of the center content truly centers it —
-    /// no ZStack needed. This also means the layout can never overlap:
-    /// HStack children reserve their own space by definition, unlike
-    /// ZStack layers which can visually collide at narrow window widths.
-    private let sideZoneWidth: CGFloat = 180
-
     var body: some View {
-        HStack(spacing: 16) {
-            HStack(spacing: 0) {
-                artworkView
-                    .frame(width: 44, height: 44)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                Spacer(minLength: 0)
-            }
-            .frame(width: sideZoneWidth, alignment: .leading)
-
-            VStack(spacing: 6) {
-                if let song = player.currentSong {
-                    MarqueeText(text: displayTitle(for: song), size: 14, weight: .semibold, autoScroll: true)
-                        .frame(maxWidth: 600)
-
-                    HStack(spacing: 8) {
-                        Text(formatTime(clock.currentTime))
-                            .appCaption2Font()
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                            .frame(width: 34, alignment: .trailing)
-
-                        Slider(
-                            value: Binding(
-                                get: { clock.currentTime },
-                                set: { player.seek(to: $0) }
-                            ),
-                            in: 0...max(player.duration, 1)
-                        )
-                        .animation(.linear(duration: 0.02), value: clock.currentTime)
-                        .help("Seek")
-
-                        Text(formatTime(player.duration))
-                            .appCaption2Font()
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                            .frame(width: 34, alignment: .leading)
-                    }
-                    .frame(maxWidth: 640)
-                } else {
-                    Text("No song playing")
-                        .appCaptionFont()
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack(spacing: 8) {
+        VStack(spacing: 8) {
+            HStack(spacing: 14) {
+                // Transport controls, grouped tightly on the left.
+                HStack(spacing: 6) {
                     PlayerControlButton(systemImage: "shuffle", isActive: player.isShuffling, tooltip: "Shuffle") {
                         player.isShuffling.toggle()
                     }
@@ -85,33 +36,64 @@ struct PlayerBar: View {
                         player.cycleRepeatMode()
                     }
                 }
-            }
-            .frame(minWidth: 320, maxWidth: 700)
-            .layoutPriority(1)
 
-            HStack(spacing: 10) {
-                Spacer(minLength: 0)
-                PlayerControlButton(
-                    systemImage: "list.bullet",
-                    isActive: uiState.showQueue,
-                    tooltip: uiState.showQueue ? "Hide Queue" : "Show Queue"
-                ) {
-                    uiState.showQueue.toggle()
+                // Artwork + title, right next to the controls (not centered).
+                HStack(spacing: 10) {
+                    artworkView
+                        .frame(width: 36, height: 36)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                    if let song = player.currentSong {
+                        MarqueeText(text: displayTitle(for: song), size: 14, weight: .semibold, autoScroll: true)
+                    } else {
+                        Text("No song playing")
+                            .appCaptionFont()
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                HStack(spacing: 6) {
-                    Image(systemName: "speaker.fill")
-                        .appCaption2Font()
-                        .foregroundStyle(.secondary)
-                    Slider(value: $player.volume, in: 0...1)
-                        .frame(width: 90)
-                        .help("Volume")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // Higher priority than the Spacer right after it, so this
+                // claims the empty leftover space instead of splitting it
+                // evenly with the Spacer (which just needs its 12pt minimum).
+                .layoutPriority(1)
+
+                Spacer(minLength: 12)
+
+                // Everything else, pushed to the far right.
+                HStack(spacing: 16) {
+                    PlayerControlButton(
+                        systemImage: "list.bullet",
+                        isActive: uiState.showQueue,
+                        tooltip: uiState.showQueue ? "Hide Queue" : "Show Queue"
+                    ) {
+                        uiState.showQueue.toggle()
+                    }
+                    HStack(spacing: 6) {
+                        Image(systemName: "speaker.fill")
+                            .appCaption2Font()
+                            .foregroundStyle(.secondary)
+                        Slider(value: $player.volume, in: 0...1)
+                            .frame(width: 90)
+                            .help("Volume")
+                    }
                 }
             }
-            .frame(width: sideZoneWidth, alignment: .trailing)
+
+            // Isolated into its own view so the 20x/sec clock ticks only
+            // re-render this row — not the whole bar (which was very
+            // plausibly interfering with the buttons' click handling above,
+            // since the buttons don't need to know about playback time at all).
+            PlayerProgressBar()
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.bar)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .background(
+            Color(nsColor: .windowBackgroundColor)
+                .allowsHitTesting(false)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .padding(.horizontal, 10)
+        .padding(.top, 8)
     }
 
     @ViewBuilder
@@ -131,10 +113,10 @@ struct PlayerBar: View {
     }
 
     private func displayTitle(for song: Song) -> String {
-        if let t = edits.edit(for: song)?.title, !t.isEmpty { return t }
+        if let t = edits.edit(for: song)?.title, !t.isEmpty { return t.normalizedForDisplay }
         let tagTitle = metadataStore.metadata(for: song)?.title
-        if let tagTitle, !tagTitle.isEmpty { return tagTitle }
-        return song.title
+        if let tagTitle, !tagTitle.isEmpty { return tagTitle.normalizedForDisplay }
+        return song.title.normalizedForDisplay
     }
 
     private func effectiveArtwork(for song: Song) -> NSImage? {
@@ -149,6 +131,39 @@ struct PlayerBar: View {
         case .off: return "Repeat"
         case .all: return "Repeat All"
         case .one: return "Repeat One"
+        }
+    }
+}
+
+/// The thin scrubber + time labels — isolated here specifically so it's the
+/// only thing that re-renders 20x/second while something plays.
+private struct PlayerProgressBar: View {
+    @EnvironmentObject private var player: AudioPlayerManager
+    @EnvironmentObject private var clock: PlaybackClock
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(formatTime(clock.currentTime))
+                .appCaption2Font()
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .frame(width: 34, alignment: .trailing)
+
+            Slider(
+                value: Binding(
+                    get: { clock.currentTime },
+                    set: { player.seek(to: $0) }
+                ),
+                in: 0...max(player.duration, 1)
+            )
+            .animation(.linear(duration: 0.02), value: clock.currentTime)
+            .help("Seek")
+
+            Text(formatTime(player.duration))
+                .appCaption2Font()
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .frame(width: 34, alignment: .leading)
         }
     }
 

@@ -107,16 +107,24 @@ struct ContentView: View {
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 0) {
                     PlayerBar()
-                    if !statusBarText.isEmpty {
-                        Divider()
-                        Text(statusBarText)
-                            .appCaption2Font()
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 4)
-                            .background(.bar)
-                    }
+                    Divider()
+                    Text(statusBarText)
+                        .appCaption2Font()
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
                 }
+                // PlayerBar's own rounded card has some transparent margin
+                // around it (from its outer padding, applied after its
+                // clipShape) — that margin had nothing behind it, which is
+                // exactly where the list was showing through. This one
+                // opaque layer behind the *entire* docked region closes
+                // that gap for good, regardless of what padding/rounding
+                // happens inside.
+                .background(
+                    Color(nsColor: .windowBackgroundColor)
+                        .allowsHitTesting(false)
+                )
             }
             .toolbar {
                 ToolbarItem {

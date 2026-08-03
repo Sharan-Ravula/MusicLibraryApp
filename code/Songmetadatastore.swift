@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import CoreMedia
 import AppKit
 import Combine
 
@@ -16,6 +17,13 @@ struct SongMetadata {
     var duration: TimeInterval?
     var bitrateKbps: Int?
     var dateAdded: Date?
+    var channels: Int?
+    var sampleRateHz: Double?
+    /// Bit depth — only meaningful for uncompressed/lossless formats
+    /// (wav, aiff, flac). Compressed formats like mp3/aac don't have a
+    /// fixed bit depth, so this stays nil for those.
+    var bitsPerSample: Int?
+    var fileSizeBytes: Int64?
 }
 
 /// The subset of SongMetadata that's cheap to store and doesn't include
@@ -28,14 +36,19 @@ private struct PersistedSongMetadata: Codable {
     var duration: TimeInterval?
     var bitrateKbps: Int?
     var dateAdded: Date?
+    var channels: Int?
+    var sampleRateHz: Double?
+    var bitsPerSample: Int?
+    var fileSizeBytes: Int64?
 }
 
-/// Loads ID3/metadata tags, duration, and bitrate for songs on demand and
-/// caches the results — in memory for this session, and (minus artwork) in
-/// a JSON file on disk so relaunching doesn't require re-scanning every
-/// file again. Built for large libraries: the on-disk cache is kept in
-/// memory for O(1) lookups, and writes are debounced so scanning hundreds
-/// or thousands of songs at once doesn't rewrite the whole file after each one.
+/// Loads ID3/metadata tags, duration, bitrate, and technical audio details
+/// for songs on demand and caches the results — in memory for this session,
+/// and (minus artwork) in a JSON file on disk so relaunching doesn't require
+/// re-scanning every file again. Built for large libraries: the on-disk
+/// cache is kept in memory for O(1) lookups, and writes are debounced so
+/// scanning hundreds or thousands of songs at once doesn't rewrite the
+/// whole file after each one.
 @MainActor
 final class SongMetadataStore: ObservableObject {
     @Published private(set) var cache: [URL: SongMetadata] = [:]
@@ -87,7 +100,11 @@ final class SongMetadataStore: ObservableObject {
                 artworkData: nil,
                 duration: persisted.duration,
                 bitrateKbps: persisted.bitrateKbps,
-                dateAdded: persisted.dateAdded
+                dateAdded: persisted.dateAdded,
+                channels: persisted.channels,
+                sampleRateHz: persisted.sampleRateHz,
+                bitsPerSample: persisted.bitsPerSample,
+                fileSizeBytes: persisted.fileSizeBytes
             )
         }
 
@@ -127,6 +144,35 @@ final class SongMetadataStore: ObservableObject {
                 if let rate = try? await track.load(.estimatedDataRate), rate > 0 {
                     result.bitrateKbps = Int(rate / 1000)
                 }
+
+                // Channels, sample rate, and bit depth come from the track's
+                // raw format description — estimatedDataRate alone doesn't
+                // expose these.
+                if let formatDescriptions = try? await track.load(.formatDescriptions),
+                   let formatDesc = formatDescriptions.first,
+                   let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)?.pointee {
+                    result.channels = Int(asbd.mChannelsPerFrame)
+                    result.sampleRateHz = asbd.mSampleRate
+                    let bits = Int(asbd.mBitsPerChannel)
+                    result.bitsPerSample = bits > 0 ? bits : nil
+                }
+            }
+
+            // File size, in bytes, of the real underlying file.
+            if let sizeValues = try? url.resourceValues(forKeys: [.fileSizeKey]), let size = sizeValues.fileSize {
+                result.fileSizeBytes = Int64(size)
+            }
+
+            // Fallback bitrate: AVFoundation's estimatedDataRate can come
+            // back empty for some wav/flac files. When that happens, derive
+            // an approximate bitrate directly from file size ÷ duration —
+            // works for literally any format since it doesn't depend on
+            // AVFoundation understanding the codec's internals.
+            if (result.bitrateKbps == nil || result.bitrateKbps == 0),
+               let duration = result.duration, duration > 0,
+               let fileSize = result.fileSizeBytes {
+                let bitsPerSecond = Double(fileSize) * 8 / duration
+                result.bitrateKbps = Int(bitsPerSecond / 1000)
             }
 
             // "Date added" = when the alias/file for this playlist entry was
@@ -143,7 +189,11 @@ final class SongMetadataStore: ObservableObject {
                 album: result.album,
                 duration: result.duration,
                 bitrateKbps: result.bitrateKbps,
-                dateAdded: result.dateAdded
+                dateAdded: result.dateAdded,
+                channels: result.channels,
+                sampleRateHz: result.sampleRateHz,
+                bitsPerSample: result.bitsPerSample,
+                fileSizeBytes: result.fileSizeBytes
             )
             self.scheduleSave()
         }

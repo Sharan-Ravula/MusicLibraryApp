@@ -3,7 +3,6 @@ import AppKit
 
 struct MenuBarPlayerView: View {
     @EnvironmentObject private var player: AudioPlayerManager
-    @EnvironmentObject private var clock: PlaybackClock
     @EnvironmentObject private var metadataStore: SongMetadataStore
     @EnvironmentObject private var edits: MetadataEditsStore
 
@@ -29,26 +28,10 @@ struct MenuBarPlayerView: View {
                     Spacer()
                 }
 
-                HStack(spacing: 6) {
-                    Text(formatTime(clock.currentTime))
-                        .appCaption2Font()
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-
-                    Slider(
-                        value: Binding(
-                            get: { clock.currentTime },
-                            set: { player.seek(to: $0) }
-                        ),
-                        in: 0...max(player.duration, 1)
-                    )
-                    .animation(.linear(duration: 0.02), value: clock.currentTime)
-
-                    Text(formatTime(player.duration))
-                        .appCaption2Font()
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
+                // Isolated so the 20x/sec clock ticks only re-render this
+                // row — not the buttons below, which don't need playback
+                // time at all and shouldn't be re-evaluated because of it.
+                MenuBarProgressBar()
 
                 HStack(spacing: 6) {
                     PlayerControlButton(systemImage: "backward.fill", tooltip: "Previous Track") {
@@ -127,10 +110,10 @@ struct MenuBarPlayerView: View {
     }
 
     private func displayTitle(for song: Song) -> String {
-        if let t = edits.edit(for: song)?.title, !t.isEmpty { return t }
+        if let t = edits.edit(for: song)?.title, !t.isEmpty { return t.normalizedForDisplay }
         let tagTitle = metadataStore.metadata(for: song)?.title
-        if let tagTitle, !tagTitle.isEmpty { return tagTitle }
-        return song.title
+        if let tagTitle, !tagTitle.isEmpty { return tagTitle.normalizedForDisplay }
+        return song.title.normalizedForDisplay
     }
 
     private func effectiveArtwork(for song: Song) -> NSImage? {
@@ -145,6 +128,36 @@ struct MenuBarPlayerView: View {
         case .off: return "Repeat"
         case .all: return "Repeat All"
         case .one: return "Repeat One"
+        }
+    }
+}
+
+/// The thin scrubber + time labels — isolated here specifically so it's the
+/// only thing that re-renders 20x/second while something plays.
+private struct MenuBarProgressBar: View {
+    @EnvironmentObject private var player: AudioPlayerManager
+    @EnvironmentObject private var clock: PlaybackClock
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(formatTime(clock.currentTime))
+                .appCaption2Font()
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+
+            Slider(
+                value: Binding(
+                    get: { clock.currentTime },
+                    set: { player.seek(to: $0) }
+                ),
+                in: 0...max(player.duration, 1)
+            )
+            .animation(.linear(duration: 0.02), value: clock.currentTime)
+
+            Text(formatTime(player.duration))
+                .appCaption2Font()
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
         }
     }
 
