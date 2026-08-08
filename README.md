@@ -21,17 +21,21 @@ A native macOS music player built with SwiftUI. Your music library is just folde
 - System notifications when a new song starts, with the song's artwork attached (falls back to the app icon if there's none)
 
 **Song List**
-- Sortable, resizable-column table view: Title, Artist, Album, Duration, Bitrate, Date Added
-- Toggle which columns are visible
+- Sortable, resizable-column table view: Title, Artist, Album, Duration, Bitrate, Format, Sample Rate, Bit Depth, Channels, File Size, Date Added
+- Drag column headers to reorder them; toggle which ones are visible
 - Drag-and-drop manual reordering (when not sorted by a column)
 - Tile/grid view as an alternative to the list
 - Search/filter within a playlist
 - Scrolling "marquee" title for text too long to fit — hover to scroll in the table, auto-scrolls continuously in the player bar
+- Songs whose original file has been moved or deleted show greyed out with a warning icon, and won't attempt to play
+- Playlists whose folder has been moved or deleted show the same way in the sidebar
 
 **Metadata**
-- Reads real ID3/metadata tags, embedded artwork, duration, and bitrate directly from your files via `AVFoundation`
+- Reads real ID3/metadata tags, embedded artwork, duration, bitrate, sample rate, bit depth, and channel count directly from your files via `AVFoundation`
+- Bitrate for lossless formats (wav/flac) falls back to a file-size/duration calculation when `AVFoundation` doesn't report one directly
 - Edit title/artist/album and set custom artwork per song from within the app — stored as an app-side overlay (not written into the original files)
 - Metadata is cached to disk so relaunching the app doesn't require re-scanning your whole library
+- "Fancy" stylized Unicode text in titles (common in bootleg slowed/reverb rips) is normalized back to plain text for display
 
 **Queue**
 - Toggleable "Continue Playing" panel showing what's queued next
@@ -54,15 +58,16 @@ A native macOS music player built with SwiftUI. Your music library is just folde
 ## Building
 
 1. Clone the repo
-2. Open `MusicLibrary.xcodeproj` (or create a new Xcode project and add these files — see below)
-3. In the target's **Signing & Capabilities**, ensure **App Sandbox → File Access → User Selected File** is set to **Read/Write**
-4. Build and run (Cmd+R)
+2. Open `MusicLibrary.xcodeproj`
+3. Build and run (Cmd+R)
 
-### If setting up from source files rather than a `.xcodeproj`
+The project is already configured with **App Sandbox → File Access → User Selected File: Read/Write**, which the app needs to access your chosen music folder. If you're setting this up as a brand-new Xcode project instead of using the included `.xcodeproj`, see below.
+
+### If setting up from source files rather than the included `.xcodeproj`
 
 1. Create a new **macOS App** project in Xcode (SwiftUI interface)
 2. Delete the default `ContentView.swift`
-3. Add all `.swift` files from this repo to the project
+3. Add all `.swift` files from this repo's `Code/` folder to the project
 4. Set minimum deployment target to macOS 13.0
 5. Enable **App Sandbox** with **User Selected File: Read/Write** under Signing & Capabilities
 
@@ -87,6 +92,7 @@ A native macOS music player built with SwiftUI. Your music library is just folde
 ```
 MusicLibrary/
 ├── README.md
+├── .gitignore
 ├── MusicLibrary.xcodeproj/
 └── Code/
     ├── MusicLibraryApp.swift
@@ -106,6 +112,8 @@ MusicLibrary/
     ├── ColumnResizeHandle.swift
     ├── PlayerControlButton.swift
     ├── BadgedIcon.swift
+    ├── AlwaysShowsScrollbar.swift
+    ├── String+Normalize.swift
     ├── NotificationManager.swift
     ├── AppSettings.swift
     ├── AppFontScale.swift
@@ -113,7 +121,7 @@ MusicLibrary/
     └── UIState.swift
 ```
 
-That's every `.swift` file in the project (22 total) plus this README. If you have an actual `.xcodeproj` folder from Xcode, upload that too — GitHub will show it as a folder alongside these files.
+`MusicLibrary.xcodeproj` is a folder Xcode manages for you — just drag the whole thing into GitHub Desktop or your git client as-is, don't reach inside it. That's every `.swift` file (24 total), grouped in `Code/`, plus the project file, a `.gitignore` (keeps Xcode's local build junk out of the repo), and this README.
 
 ## Project Structure
 
@@ -136,6 +144,8 @@ That's every `.swift` file in the project (22 total) plus this README. If you ha
 | `ColumnResizeHandle.swift` | Draggable resize handle (table columns, queue panel) |
 | `PlayerControlButton.swift` | Reusable hover-highlighted icon button with tooltip |
 | `BadgedIcon.swift` | Base icon + small "+" badge, for actions with no matching built-in SF Symbol |
+| `AlwaysShowsScrollbar.swift` | Bridges to AppKit to force a specific scroll view's scrollbar to stay visible |
+| `String+Normalize.swift` | Normalizes stylized/"fancy" Unicode text back to plain characters for display |
 | `NotificationManager.swift` | Now-playing system notifications with artwork |
 | `AppSettings.swift` | Font scale and theme settings |
 | `AppFontScale.swift` | App-wide font scaling system |
