@@ -157,13 +157,18 @@ struct SongListView: View {
             }
             ToolbarItem {
                 Button {
+                    // Re-sync the sidebar against disk too, so a folder
+                    // that's been deleted/moved outside the app (e.g. in
+                    // Finder) gets picked up as missing right away, not just
+                    // on next launch.
+                    library.loadPlaylists()
                     for song in library.songs(in: playlist) {
                         metadataStore.refresh(for: song)
                     }
                 } label: {
                     Label("Refresh Metadata", systemImage: "arrow.clockwise")
                 }
-                .help("Refresh Metadata")
+                .help("Refresh Metadata and Re-check Folders")
             }
             ToolbarItem {
                 Button {
@@ -201,37 +206,48 @@ struct SongListView: View {
 
                         Divider()
 
-                        List {
-                            ForEach(songs) { song in
-                                songRow(song, in: songs)
-                                    .listRowInsets(EdgeInsets())
-                                    .listRowSeparator(.hidden)
-                                    // List's native drag-to-reorder (.onMove)
-                                    // doesn't reliably work here because this
-                                    // List is nested inside a horizontal
-                                    // ScrollView (needed so wide columns
-                                    // scroll instead of distorting the
-                                    // window) — the outer scroll view's own
-                                    // gesture handling interferes with the
-                                    // List's internal drag-session. Handling
-                                    // it manually via onDrag/onDrop sidesteps
-                                    // that entirely.
-                                    .onDrag {
-                                        draggedSong = song
-                                        return NSItemProvider(object: song.id.absoluteString as NSString)
-                                    }
-                                    .onDrop(of: [.text], isTargeted: nil) { _ in
-                                        guard sortColumn == nil, let draggedSong, draggedSong != song else { return false }
-                                        reorder(dragged: draggedSong, onto: song, in: songs)
-                                        self.draggedSong = nil
-                                        return true
-                                    }
+                        // Swapped from List to a plain ScrollView here — we
+                        // weren't using any List-specific feature (selection,
+                        // native separators/reordering are all already
+                        // hand-rolled above), and ScrollView's classic
+                        // showsIndicators parameter reliably keeps the
+                        // scrollbar visible, unlike the newer .scrollIndicators()
+                        // modifier which can be unreliable when nested inside
+                        // another scroll view the way this is.
+                        ScrollView(.vertical, showsIndicators: true) {
+                            LazyVStack(spacing: 0) {
+                                ForEach(songs) { song in
+                                    songRow(song, in: songs)
+                                        // List's native drag-to-reorder (.onMove)
+                                        // doesn't reliably work here because this
+                                        // is nested inside a horizontal
+                                        // ScrollView (needed so wide columns
+                                        // scroll instead of distorting the
+                                        // window) — the outer scroll view's own
+                                        // gesture handling interferes with a
+                                        // List's internal drag-session. Handling
+                                        // it manually via onDrag/onDrop sidesteps
+                                        // that entirely.
+                                        .onDrag {
+                                            draggedSong = song
+                                            return NSItemProvider(object: song.id.absoluteString as NSString)
+                                        }
+                                        .onDrop(of: [.text], isTargeted: nil) { _ in
+                                            guard sortColumn == nil, let draggedSong, draggedSong != song else { return false }
+                                            reorder(dragged: draggedSong, onto: song, in: songs)
+                                            self.draggedSong = nil
+                                            return true
+                                        }
+                                }
+                                // The horizontal scrollbar renders as an overlay
+                                // at the very bottom of this scroll area —
+                                // without this, it sits directly on top of the
+                                // last row's text.
+                                Color.clear.frame(height: 16)
                             }
+                            .background(AlwaysShowsScrollbar())
                         }
-                        .listStyle(.plain)
                         .frame(width: max(totalTableWidth, geo.size.width))
-
-                        sortStatusBar
                     }
                     // Never narrower than the viewport (fills nicely when columns
                     // are compact), but can grow wider and scroll instead of
@@ -240,6 +256,13 @@ struct SongListView: View {
                     .frame(width: max(totalTableWidth, geo.size.width), height: geo.size.height)
                 }
             }
+
+            // Kept OUTSIDE the horizontal ScrollView on purpose: this bar
+            // (and its Clear Sort button) needs to always be reachable
+            // without scrolling — if it were inside the scrollable table
+            // area, a wide table (many visible columns) would push the
+            // button off-screen to the right.
+            sortStatusBar
         }
         .task(id: playlist.id) {
             // Give metadata a moment to load (titles/artists may switch from
@@ -321,15 +344,12 @@ struct SongListView: View {
         HStack(spacing: 0) {
             Text("").frame(width: 38)
 
-            columnHeader("Title", .title)
-                .frame(width: titleColumnWidth, alignment: .leading)
+            columnHeader("Title", .title, width: titleColumnWidth, alignment: .leading)
             ColumnResizeHandle(width: $titleColumnWidth, minWidth: 100, maxWidth: 700)
 
             ForEach(orderedVisibleColumns) { column in
                 let range = column.widthRange
-                columnHeader(column.rawValue, column.sortColumn)
-                    .frame(width: widthBinding(for: column).wrappedValue, alignment: .center)
-                    .contentShape(Rectangle())
+                columnHeader(column.rawValue, column.sortColumn, width: widthBinding(for: column).wrappedValue, alignment: .center)
                     .onDrag {
                         draggedColumn = column
                         return NSItemProvider(object: column.rawValue as NSString)
@@ -353,7 +373,11 @@ struct SongListView: View {
         .background(.bar)
     }
 
-    private func columnHeader(_ title: String, _ column: SongSortColumn) -> some View {
+    /// The tap target spans the *entire* column width (not just the text
+    /// itself) — that's why .frame() is applied before .contentShape() here
+    /// rather than after at the call site, which would size the hit area to
+    /// only the label's natural width.
+    private func columnHeader(_ title: String, _ column: SongSortColumn, width: CGFloat, alignment: Alignment) -> some View {
         HStack(spacing: 3) {
             Text(title)
             if sortColumn == column {
@@ -361,6 +385,7 @@ struct SongListView: View {
                     .appCaption2Font()
             }
         }
+        .frame(width: width, alignment: alignment)
         .contentShape(Rectangle())
         .onTapGesture {
             if sortColumn == column {
@@ -408,7 +433,8 @@ struct SongListView: View {
     }
 
     private func songRow(_ song: Song, in songs: [Song]) -> some View {
-        HStack(spacing: 0) {
+        let exists = songFileExists(song)
+        return HStack(spacing: 0) {
             HStack(spacing: 4) {
                 // A visual cue that this row can be dragged to reorder —
                 // only shown when that's actually possible (unsorted). Click
@@ -419,8 +445,8 @@ struct SongListView: View {
                         .appCaption2Font()
                         .foregroundStyle(.secondary.opacity(0.5))
                 }
-                Image(systemName: player.currentSong == song ? "speaker.wave.2.fill" : "music.note")
-                    .foregroundStyle(player.currentSong == song ? Color.accentColor : .secondary)
+                Image(systemName: iconName(for: song, exists: exists))
+                    .foregroundStyle(!exists ? .orange : (player.currentSong == song ? Color.accentColor : .secondary))
             }
             .frame(width: 38)
 
@@ -440,6 +466,7 @@ struct SongListView: View {
 
             Spacer(minLength: 0)
         }
+        .opacity(exists ? 1 : 0.45)
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
         .contentShape(Rectangle())
@@ -449,12 +476,27 @@ struct SongListView: View {
                 .frame(height: 1)
         }
         .onTapGesture(count: 2) {
+            guard exists else { return }
             library.prepareAccess(for: song)
             player.play(song: song, in: songs)
         }
         .contextMenu {
             songContextMenu(for: song, in: songs)
         }
+        .help(exists ? "" : "The original file for this song can't be found — it may have been moved or deleted.")
+    }
+
+    /// True if the song's alias points to a file that's actually still
+    /// there. Aliases just point at a path — if the real file gets moved or
+    /// deleted (e.g. in Finder, outside the app), the alias itself still
+    /// shows up in the folder, but playing it would fail.
+    private func songFileExists(_ song: Song) -> Bool {
+        FileManager.default.fileExists(atPath: song.playbackURL.path)
+    }
+
+    private func iconName(for song: Song, exists: Bool) -> String {
+        if !exists { return "exclamationmark.triangle" }
+        return player.currentSong == song ? "speaker.wave.2.fill" : "music.note"
     }
 
     /// Moves the dragged song to sit right where it was dropped, and
@@ -482,7 +524,8 @@ struct SongListView: View {
     }
 
     private func tile(for song: Song, in songs: [Song]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let exists = songFileExists(song)
+        return VStack(alignment: .leading, spacing: 6) {
             artworkView(for: song)
                 .aspectRatio(1, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -490,6 +533,12 @@ struct SongListView: View {
                     if player.currentSong == song {
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(Color.accentColor, lineWidth: 2)
+                    }
+                    if !exists {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(.black.opacity(0.35))
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
                     }
                 }
 
@@ -501,14 +550,17 @@ struct SongListView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
+        .opacity(exists ? 1 : 0.45)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
+            guard exists else { return }
             library.prepareAccess(for: song)
             player.play(song: song, in: songs)
         }
         .contextMenu {
             songContextMenu(for: song, in: songs)
         }
+        .help(exists ? "" : "The original file for this song can't be found — it may have been moved or deleted.")
     }
 
     @ViewBuilder
@@ -531,13 +583,19 @@ struct SongListView: View {
 
     @ViewBuilder
     private func songContextMenu(for song: Song, in songs: [Song]) -> some View {
-        Button("Play") {
-            library.prepareAccess(for: song)
-            player.play(song: song, in: songs)
-        }
-        Button("Play Next") {
-            library.prepareAccess(for: song)
-            player.queueNext(song)
+        let exists = songFileExists(song)
+
+        if exists {
+            Button("Play") {
+                library.prepareAccess(for: song)
+                player.play(song: song, in: songs)
+            }
+            Button("Play Next") {
+                library.prepareAccess(for: song)
+                player.queueNext(song)
+            }
+        } else {
+            Text("File not found — moved or deleted")
         }
         Divider()
         Menu("Add to Playlist") {

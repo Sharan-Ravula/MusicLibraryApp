@@ -29,11 +29,24 @@ struct ContentView: View {
                 List(selection: $selectedPlaylist) {
                     Section("Playlists (\(library.playlists.count))") {
                         ForEach(library.playlists) { playlist in
+                            let exists = library.folderExists(for: playlist)
+
                             HStack {
-                                Label(playlist.name, systemImage: "music.note.list")
-                                    .foregroundStyle(settings.theme.color)
+                                Label(
+                                    playlist.name,
+                                    systemImage: exists ? "music.note.list" : "exclamationmark.triangle"
+                                )
+                                .foregroundStyle(exists ? settings.theme.color : .secondary)
+
+                                if !exists {
+                                    Text("(missing)")
+                                        .appCaption2Font()
+                                        .foregroundStyle(.secondary)
+                                }
+
                                 Spacer()
-                                if library.hasSubfolders(playlist) {
+
+                                if exists, library.hasSubfolders(playlist) {
                                     Button {
                                         library.navigateInto(playlist)
                                         selectedPlaylist = nil
@@ -45,24 +58,31 @@ struct ContentView: View {
                                     .help("Open \"\(playlist.name)\" Folder")
                                 }
                             }
+                            .opacity(exists ? 1 : 0.45)
                             .tag(playlist)
                             .contextMenu {
-                                Button("Add Songs…") { library.chooseAndAddSongs(to: playlist) }
-                                Button("Rename…") {
-                                    renamingPlaylist = playlist
-                                    renameText = playlist.name
+                                if exists {
+                                    Button("Add Songs…") { library.chooseAndAddSongs(to: playlist) }
+                                    Button("Rename…") {
+                                        renamingPlaylist = playlist
+                                        renameText = playlist.name
+                                    }
+                                    Button("Show in Finder") {
+                                        NSWorkspace.shared.activateFileViewerSelecting([playlist.url])
+                                    }
+                                    Divider()
+                                } else {
+                                    Text("This folder no longer exists on disk.")
+                                    Divider()
                                 }
-                                Button("Show in Finder") {
-                                    NSWorkspace.shared.activateFileViewerSelecting([playlist.url])
-                                }
-                                Divider()
                                 Button("Delete", role: .destructive) {
                                     if selectedPlaylist == playlist { selectedPlaylist = nil }
                                     library.delete(playlist)
                                 }
                             }
                             .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-                                handleDrop(providers: providers, into: playlist)
+                                guard exists else { return false }
+                                return handleDrop(providers: providers, into: playlist)
                             }
                         }
                     }

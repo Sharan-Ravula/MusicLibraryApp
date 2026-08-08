@@ -88,6 +88,15 @@ final class LibraryManager: ObservableObject {
         return entries.contains { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true }
     }
 
+    /// True if a playlist's folder is still actually there on disk — used
+    /// to grey out playlists whose folder was deleted or moved outside the
+    /// app (e.g. in Finder) since it was last scanned.
+    func folderExists(for playlist: Playlist) -> Bool {
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: playlist.url.path, isDirectory: &isDirectory)
+        return exists && isDirectory.boolValue
+    }
+
     func loadPlaylists() {
         guard let currentFolder else { playlists = []; return }
         let fm = FileManager.default
