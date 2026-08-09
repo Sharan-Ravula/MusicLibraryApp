@@ -31,7 +31,7 @@ struct PlayerBar: View {
                     PlayerControlButton(
                         systemImage: player.repeatMode == .one ? "repeat.1" : "repeat",
                         isActive: player.repeatMode != .off,
-                        tooltip: repeatTooltip
+                        tooltip: player.repeatMode.tooltip
                     ) {
                         player.cycleRepeatMode()
                     }
@@ -44,7 +44,7 @@ struct PlayerBar: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6))
 
                     if let song = player.currentSong {
-                        MarqueeText(text: displayTitle(for: song), size: 14, weight: .semibold, autoScroll: true)
+                        MarqueeText(text: song.displayTitle(edits: edits, metadataStore: metadataStore), size: 14, weight: .semibold, autoScroll: true)
                     } else {
                         Text("No song playing")
                             .appCaptionFont()
@@ -98,7 +98,7 @@ struct PlayerBar: View {
 
     @ViewBuilder
     private var artworkView: some View {
-        if let song = player.currentSong, let artwork = effectiveArtwork(for: song) {
+        if let song = player.currentSong, let artwork = song.effectiveArtwork(edits: edits, metadataStore: metadataStore) {
             Image(nsImage: artwork)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
@@ -112,27 +112,6 @@ struct PlayerBar: View {
         }
     }
 
-    private func displayTitle(for song: Song) -> String {
-        if let t = edits.edit(for: song)?.title, !t.isEmpty { return t.normalizedForDisplay }
-        let tagTitle = metadataStore.metadata(for: song)?.title
-        if let tagTitle, !tagTitle.isEmpty { return tagTitle.normalizedForDisplay }
-        return song.title.normalizedForDisplay
-    }
-
-    private func effectiveArtwork(for song: Song) -> NSImage? {
-        if let data = edits.edit(for: song)?.artworkData, let image = NSImage(data: data) {
-            return image
-        }
-        return metadataStore.metadata(for: song)?.artwork
-    }
-
-    private var repeatTooltip: String {
-        switch player.repeatMode {
-        case .off: return "Repeat"
-        case .all: return "Repeat All"
-        case .one: return "Repeat One"
-        }
-    }
 }
 
 /// The thin scrubber + time labels — isolated here specifically so it's the

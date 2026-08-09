@@ -39,8 +39,8 @@ enum AppTheme: String, CaseIterable, Identifiable {
 /// which doesn't reliably scale text on macOS.
 @MainActor
 final class AppSettings: ObservableObject {
-    private static let minScale: CGFloat = 0.8
-    private static let maxScale: CGFloat = 1.6
+    static let minScale: CGFloat = 0.8
+    static let maxScale: CGFloat = 1.6
     private static let step: CGFloat = 0.1
 
     @Published var fontScale: CGFloat {
@@ -53,7 +53,7 @@ final class AppSettings: ObservableObject {
 
     init() {
         if let saved = UserDefaults.standard.object(forKey: "fontScale") as? Double {
-            fontScale = CGFloat(saved)
+            fontScale = min(max(CGFloat(saved), Self.minScale), Self.maxScale)
         } else {
             fontScale = 1.0
         }

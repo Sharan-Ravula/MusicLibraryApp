@@ -35,7 +35,6 @@ private struct PersistedSongMetadata: Codable {
     var album: String?
     var duration: TimeInterval?
     var bitrateKbps: Int?
-    var dateAdded: Date?
     var channels: Int?
     var sampleRateHz: Double?
     var bitsPerSample: Int?
@@ -91,6 +90,14 @@ final class SongMetadataStore: ObservableObject {
         // Fast path: if we've scanned this file before, show those values
         // immediately instead of dashes while the fresh scan (below) runs
         // in the background — mainly to pick up artwork, which isn't persisted.
+        //
+        // "Date added" is deliberately NOT read from diskCache here: that
+        // cache is keyed by the real file's resolved path, which is shared
+        // by every playlist alias pointing at the same underlying file.
+        // Date added is specific to this alias (when it joined THIS
+        // playlist), so it's recomputed directly per-song instead — it's a
+        // cheap, synchronous resourceValues() lookup, not worth waiting for
+        // the full async rescan below.
         if let persisted = diskCache[path] {
             cache[song.id] = SongMetadata(
                 title: persisted.title,
@@ -100,7 +107,7 @@ final class SongMetadataStore: ObservableObject {
                 artworkData: nil,
                 duration: persisted.duration,
                 bitrateKbps: persisted.bitrateKbps,
-                dateAdded: persisted.dateAdded,
+                dateAdded: dateAdded(for: song),
                 channels: persisted.channels,
                 sampleRateHz: persisted.sampleRateHz,
                 bitsPerSample: persisted.bitsPerSample,
@@ -177,10 +184,9 @@ final class SongMetadataStore: ObservableObject {
 
             // "Date added" = when the alias/file for this playlist entry was
             // created, not the original file's creation date — so it reflects
-            // when the song joined this playlist.
-            if let values = try? song.url.resourceValues(forKeys: [.creationDateKey]) {
-                result.dateAdded = values.creationDate
-            }
+            // when the song joined this playlist. Computed per-alias, not
+            // persisted in the path-keyed disk cache (see fast path above).
+            result.dateAdded = self.dateAdded(for: song)
 
             self.cache[song.id] = result
             self.diskCache[path] = PersistedSongMetadata(
@@ -189,7 +195,6 @@ final class SongMetadataStore: ObservableObject {
                 album: result.album,
                 duration: result.duration,
                 bitrateKbps: result.bitrateKbps,
-                dateAdded: result.dateAdded,
                 channels: result.channels,
                 sampleRateHz: result.sampleRateHz,
                 bitsPerSample: result.bitsPerSample,
@@ -197,6 +202,10 @@ final class SongMetadataStore: ObservableObject {
             )
             self.scheduleSave()
         }
+    }
+
+    private func dateAdded(for song: Song) -> Date? {
+        (try? song.url.resourceValues(forKeys: [.creationDateKey]))?.creationDate
     }
 
     /// Coalesces writes: if many songs finish scanning close together (a

@@ -44,7 +44,7 @@ struct QueueView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 4))
 
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(displayTitle(for: song))
+                            Text(song.displayTitle(edits: edits, metadataStore: metadataStore))
                                 .appCaptionFont()
                                 .lineLimit(1)
                             if let artist = metadataStore.metadata(for: song)?.artist, !artist.isEmpty {
@@ -59,8 +59,7 @@ struct QueueView: View {
 
                         Menu {
                             Button("Play Now") {
-                                player.queueNext(song)
-                                player.playNext()
+                                player.playNow(song)
                             }
                             Button("Remove from Queue", role: .destructive) {
                                 player.removeFromQueue(song)
@@ -86,7 +85,7 @@ struct QueueView: View {
 
     @ViewBuilder
     private func artworkView(for song: Song) -> some View {
-        if let artwork = effectiveArtwork(for: song) {
+        if let artwork = song.effectiveArtwork(edits: edits, metadataStore: metadataStore) {
             Image(nsImage: artwork)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
@@ -99,18 +98,5 @@ struct QueueView: View {
                         .foregroundStyle(.secondary)
                 }
         }
-    }
-
-    private func effectiveArtwork(for song: Song) -> NSImage? {
-        if let data = edits.edit(for: song)?.artworkData, let image = NSImage(data: data) {
-            return image
-        }
-        return metadataStore.metadata(for: song)?.artwork
-    }
-
-    private func displayTitle(for song: Song) -> String {
-        if let t = edits.edit(for: song)?.title, !t.isEmpty { return t.normalizedForDisplay }
-        if let t = metadataStore.metadata(for: song)?.title, !t.isEmpty { return t.normalizedForDisplay }
-        return song.title.normalizedForDisplay
     }
 }

@@ -10,7 +10,7 @@ struct MusicLibraryApp: App {
     @StateObject private var uiState = UIState()
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: "main") {
             ContentView()
                 .environmentObject(library)
                 .environmentObject(player)
@@ -38,20 +38,28 @@ struct MusicLibraryApp: App {
             }
 
             CommandMenu("Controls") {
+                // Disabled while a text field (e.g. song search) has focus —
+                // Space and ⌘←/⌘→ are also standard text-editing keys
+                // (insert space, move cursor to line start/end), and a
+                // disabled menu item's key equivalent doesn't fire, so this
+                // stops these shortcuts from hijacking normal typing.
                 Button(player.isPlaying ? "Pause" : "Play") {
                     player.togglePlayPause()
                 }
                 .keyboardShortcut(.space, modifiers: [])
+                .disabled(uiState.isTextInputActive)
 
                 Button("Next Track") {
                     player.playNext()
                 }
                 .keyboardShortcut(.rightArrow, modifiers: .command)
+                .disabled(uiState.isTextInputActive)
 
                 Button("Previous Track") {
                     player.playPrevious()
                 }
                 .keyboardShortcut(.leftArrow, modifiers: .command)
+                .disabled(uiState.isTextInputActive)
             }
         }
 

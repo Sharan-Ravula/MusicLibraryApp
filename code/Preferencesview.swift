@@ -32,6 +32,34 @@ struct PreferencesView: View {
                     }
                 }
             }
+
+            Divider()
+
+            Text("Text Size")
+                .appHeadlineFont()
+
+            HStack(spacing: 10) {
+                Button {
+                    settings.decreaseFontSize()
+                } label: {
+                    Image(systemName: "textformat.size.smaller")
+                }
+                .disabled(settings.fontScale <= AppSettings.minScale)
+
+                Slider(
+                    value: $settings.fontScale,
+                    in: AppSettings.minScale...AppSettings.maxScale
+                )
+                .help("Text Size")
+
+                Button {
+                    settings.increaseFontSize()
+                } label: {
+                    Image(systemName: "textformat.size.larger")
+                }
+                .disabled(settings.fontScale >= AppSettings.maxScale)
+            }
+            .buttonStyle(.plain)
         }
         .padding(24)
         .frame(width: 320)

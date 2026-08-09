@@ -53,7 +53,22 @@ struct SongEditSheet: View {
                 Spacer()
                 Button("Cancel") { dismiss() }
                 Button("Save") {
-                    edits.save(title: title, artist: artist, album: album, artworkData: artworkJPEG, for: song)
+                    // Only persist fields that were actually changed from
+                    // their tag/filename fallback — otherwise every save
+                    // would freeze all four fields as permanent overrides
+                    // (since the form pre-fills them with the fallback),
+                    // and a later tag fix or "Refresh Metadata" would never
+                    // show through again. Storing "" (or nil for artwork)
+                    // is exactly what every read site already treats as
+                    // "no override, use the fallback."
+                    let tags = metadataStore.metadata(for: song)
+                    edits.save(
+                        title: title == fallbackTitle(tags) ? "" : title,
+                        artist: artist == fallbackArtist(tags) ? "" : artist,
+                        album: album == fallbackAlbum(tags) ? "" : album,
+                        artworkData: artworkJPEG == tags?.artworkData ? nil : artworkJPEG,
+                        for: song
+                    )
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -64,9 +79,21 @@ struct SongEditSheet: View {
         .onAppear {
             let existingEdit = edits.edit(for: song)
             let tags = metadataStore.metadata(for: song)
-            title = existingEdit?.title ?? tags?.title ?? song.title
-            artist = existingEdit?.artist ?? tags?.artist ?? ""
-            album = existingEdit?.album ?? tags?.album ?? ""
+            if let t = existingEdit?.title, !t.isEmpty {
+                title = t
+            } else {
+                title = fallbackTitle(tags)
+            }
+            if let a = existingEdit?.artist, !a.isEmpty {
+                artist = a
+            } else {
+                artist = fallbackArtist(tags)
+            }
+            if let al = existingEdit?.album, !al.isEmpty {
+                album = al
+            } else {
+                album = fallbackAlbum(tags)
+            }
 
             if let overrideData = existingEdit?.artworkData {
                 artworkJPEG = overrideData
@@ -76,6 +103,23 @@ struct SongEditSheet: View {
                 artworkJPEG = tags?.artworkData
             }
         }
+    }
+
+    /// The title/artist/album shown when there's no explicit override —
+    /// shared between pre-filling the form and, at save time, deciding
+    /// whether a field still matches the fallback (and so shouldn't be
+    /// persisted as an override at all).
+    private func fallbackTitle(_ tags: SongMetadata?) -> String {
+        if let t = tags?.title, !t.isEmpty { return t }
+        return song.title
+    }
+
+    private func fallbackArtist(_ tags: SongMetadata?) -> String {
+        tags?.artist ?? ""
+    }
+
+    private func fallbackAlbum(_ tags: SongMetadata?) -> String {
+        tags?.album ?? ""
     }
 
     @ViewBuilder

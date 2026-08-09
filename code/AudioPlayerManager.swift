@@ -6,6 +6,14 @@ import Combine
 
 enum RepeatMode {
     case off, all, one
+
+    var tooltip: String {
+        switch self {
+        case .off: return "Repeat"
+        case .all: return "Repeat All"
+        case .one: return "Repeat One"
+        }
+    }
 }
 
 @MainActor
@@ -13,9 +21,18 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     @Published var currentSong: Song?
     @Published var isPlaying = false
     @Published var duration: TimeInterval = 0
-    @Published var isShuffling = false
+    @Published var isShuffling = false {
+        didSet {
+            guard isShuffling != oldValue else { return }
+            applyShuffleState()
+        }
+    }
     @Published var repeatMode: RepeatMode = .off
     @Published private(set) var currentPlaylistSongs: [Song] = []
+    /// The playlist's on-disk order, as originally passed to play(song:in:) —
+    /// kept around so turning shuffle back off can restore this order for
+    /// whatever hasn't played yet, instead of leaving it shuffled forever.
+    private var originalPlaylistSongs: [Song] = []
     @Published var volume: Float = 1.0 {
         didSet {
             player?.volume = volume
@@ -41,6 +58,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     var titleResolver: ((Song) -> String)?
     var artistResolver: ((Song) -> String?)?
     var artworkResolver: ((Song) -> NSImage?)?
+    var accessPreparer: ((Song) -> Void)?
 
     /// Songs that will play after the current one, in order.
     var upcomingSongs: [Song] {
@@ -59,8 +77,14 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     /// Starts a fresh queue and plays the given song from it — used when the
     /// person double-clicks a song in the library.
     func play(song: Song, in songs: [Song]) {
-        currentPlaylistSongs = songs
-        currentIndex = songs.firstIndex(of: song)
+        originalPlaylistSongs = songs
+        if isShuffling {
+            let rest = songs.filter { $0 != song }.shuffled()
+            currentPlaylistSongs = [song] + rest
+        } else {
+            currentPlaylistSongs = songs
+        }
+        currentIndex = currentPlaylistSongs.firstIndex(of: song)
         startPlayback(song)
     }
 
@@ -106,15 +130,13 @@ final class AudioPlayerManager: NSObject, ObservableObject {
             return
         }
 
-        if isShuffling {
-            let candidates = currentPlaylistSongs.indices.filter { $0 != index }
-            let pool = candidates.isEmpty ? Array(currentPlaylistSongs.indices) : candidates
-            if let randomIndex = pool.randomElement() {
-                playAtIndex(randomIndex)
-            }
-            return
-        }
-
+        // When shuffling, the play order was already decided in advance
+        // (see applyShuffleState()/play(song:in:)) — currentPlaylistSongs
+        // itself IS the shuffled order, so advancing is just "the next
+        // index," same as unshuffled playback. This is what makes the
+        // Queue panel (upcomingSongs) show the songs that will actually
+        // play next, instead of picking a fresh random song each time
+        // playNext() runs.
         var nextIndex = index + 1
         if nextIndex >= currentPlaylistSongs.count {
             guard repeatMode == .all else {
@@ -122,6 +144,11 @@ final class AudioPlayerManager: NSObject, ObservableObject {
                 return
             }
             nextIndex = 0
+            if isShuffling {
+                // Fresh shuffle for the next lap, so repeat-all doesn't
+                // replay the exact same sequence over and over.
+                currentPlaylistSongs = currentPlaylistSongs.shuffled()
+            }
         }
         playAtIndex(nextIndex)
     }
@@ -152,6 +179,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     /// what caused next/previous to jump to the wrong track before).
     func queueNext(_ song: Song) {
         guard let index = currentIndex else {
+            originalPlaylistSongs = [song]
             currentPlaylistSongs = [song]
             currentIndex = 0
             startPlayback(song)
@@ -171,6 +199,17 @@ final class AudioPlayerManager: NSObject, ObservableObject {
         currentPlaylistSongs.insert(song, at: insertAt)
     }
 
+    /// Immediately plays a specific song from the upcoming queue. Moves it to
+    /// play next (same placement as queueNext) and starts it directly by
+    /// index — unlike playNext(), this ignores shuffle, since the whole
+    /// point of picking a specific song from the queue is to hear that song,
+    /// not a random one.
+    func playNow(_ song: Song) {
+        queueNext(song)
+        guard let index = currentIndex else { return }
+        playAtIndex(index + 1)
+    }
+
     /// Removes everything after the current song from the queue.
     func clearQueue() {
         guard let currentIndex else {
@@ -188,6 +227,31 @@ final class AudioPlayerManager: NSObject, ObservableObject {
         currentPlaylistSongs.remove(at: index)
     }
 
+    /// Re-derives the upcoming (not-yet-played) portion of the queue when
+    /// shuffle is toggled mid-playback, so both the Queue panel and actual
+    /// playback immediately reflect the new mode instead of only applying
+    /// it the next time a "next" happens.
+    private func applyShuffleState() {
+        guard let currentIndex, currentPlaylistSongs.indices.contains(currentIndex) else { return }
+        let playedAndCurrent = Array(currentPlaylistSongs[...currentIndex])
+        let upcoming = Array(currentPlaylistSongs[(currentIndex + 1)...])
+        guard !upcoming.isEmpty else { return }
+
+        let newUpcoming: [Song]
+        if isShuffling {
+            newUpcoming = upcoming.shuffled()
+        } else {
+            // Restore the playlist's original relative order for whatever
+            // hasn't played yet. Any song in the queue that isn't part of
+            // the original playlist (e.g. interjected via "Play Next" from
+            // a different playlist) keeps its current relative position,
+            // appended after the restored songs, rather than disappearing.
+            newUpcoming = originalPlaylistSongs.filter { upcoming.contains($0) }
+                + upcoming.filter { !originalPlaylistSongs.contains($0) }
+        }
+        currentPlaylistSongs = playedAndCurrent + newUpcoming
+    }
+
     private func playAtIndex(_ index: Int) {
         guard currentPlaylistSongs.indices.contains(index) else { return }
         currentIndex = index
@@ -195,6 +259,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     }
 
     private func startPlayback(_ song: Song) {
+        accessPreparer?(song)
         do {
             let newPlayer = try AVAudioPlayer(contentsOf: song.playbackURL)
             newPlayer.delegate = self

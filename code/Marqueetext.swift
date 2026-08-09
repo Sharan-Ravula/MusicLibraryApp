@@ -29,7 +29,11 @@ struct MarqueeText: View {
                 .fixedSize()
                 .background(
                     GeometryReader { textGeo in
-                        Color.clear.onAppear { textWidth = textGeo.size.width }
+                        Color.clear
+                            .onAppear { textWidth = textGeo.size.width }
+                            .onChange(of: textGeo.size.width) {
+                                textWidth = textGeo.size.width
+                            }
                     }
                 )
                 // Only left-anchor (so it can scroll from the start) once it

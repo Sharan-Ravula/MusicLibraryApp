@@ -82,7 +82,7 @@ struct ContentView: View {
                             }
                             .onDrop(of: [.fileURL], isTargeted: nil) { providers in
                                 guard exists else { return false }
-                                return handleDrop(providers: providers, into: playlist)
+                                return library.handleFileDrop(providers: providers, into: playlist)
                             }
                         }
                     }
@@ -199,6 +199,9 @@ struct ContentView: View {
                 }
                 return metadataStore.metadata(for: song)?.artwork
             }
+            player.accessPreparer = { song in
+                library.prepareAccess(for: song)
+            }
         }
         .alert("New Playlist", isPresented: $showNewPlaylistAlert) {
             TextField("Playlist name", text: $newPlaylistName)
@@ -212,10 +215,22 @@ struct ContentView: View {
             TextField("Playlist name", text: $renameText)
             Button("Rename") {
                 if let playlist = renamingPlaylist {
-                    library.rename(playlist, to: renameText)
+                    let wasSelected = selectedPlaylist == playlist
+                    let renamed = library.rename(playlist, to: renameText)
+                    if wasSelected, let renamed {
+                        selectedPlaylist = renamed
+                    }
                 }
             }
             Button("Cancel", role: .cancel) {}
+        }
+        .alert("Error", isPresented: Binding(
+            get: { library.errorMessage != nil },
+            set: { if !$0 { library.errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(library.errorMessage ?? "")
         }
     }
 
@@ -270,26 +285,5 @@ struct ContentView: View {
         let songWord = count == 1 ? "song" : "songs"
         let durationText = hours > 0 ? "\(hours) hr \(minutes) min" : "\(minutes) min"
         return "\(count) \(songWord) • \(durationText)"
-    }
-
-    /// Drag-and-drop files onto a playlist row in the sidebar → adds them as aliases.
-    private func handleDrop(providers: [NSItemProvider], into playlist: Playlist) -> Bool {
-        var didAccept = false
-        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-            didAccept = true
-            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                var url: URL?
-                if let data = item as? Data {
-                    url = URL(dataRepresentation: data, relativeTo: nil)
-                } else if let directURL = item as? URL {
-                    url = directURL
-                }
-                guard let url else { return }
-                DispatchQueue.main.async {
-                    library.addSongs(urls: [url], to: playlist)
-                }
-            }
-        }
-        return didAccept
     }
 }

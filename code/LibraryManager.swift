@@ -11,10 +11,25 @@ final class LibraryManager: ObservableObject {
     /// to libraryURL, but can be a subfolder if the person has navigated
     /// into a nested folder.
     @Published var currentFolder: URL?
+    /// Set when a user-initiated file operation (e.g. renaming a playlist)
+    /// fails, so the UI can surface it instead of failing silently.
+    @Published var errorMessage: String?
 
     private let bookmarkKey = "libraryBookmarkData"
     private let externalBookmarksKey = "externalSongBookmarks"
     private let audioExtensions: Set<String> = ["mp3", "m4a", "wav", "aiff", "aif", "flac", "aac"]
+
+    /// songs(in:) is called from SwiftUI view bodies (every render, every
+    /// search keystroke, every sort). Without caching that means a full,
+    /// synchronous directory scan on the main actor per render — this
+    /// caches per playlist and is invalidated wherever song files are added
+    /// or removed.
+    private var songsCache: [URL: [Song]] = [:]
+    /// Same idea as songsCache, but for hasSubfolders(_:) — also called from
+    /// a view body (once per playlist row, every sidebar render). Cleared
+    /// whenever loadPlaylists() runs, which is exactly when callers already
+    /// expect the sidebar to resync with disk.
+    private var hasSubfoldersCache: [URL: Bool] = [:]
 
     init() {
         restoreBookmark()
@@ -79,13 +94,21 @@ final class LibraryManager: ObservableObject {
     /// True if this folder itself contains subfolders — used to show a
     /// "navigate in" affordance only where it's actually useful.
     func hasSubfolders(_ playlist: Playlist) -> Bool {
+        if let cached = hasSubfoldersCache[playlist.url] {
+            return cached
+        }
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(
             at: playlist.url,
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
-        ) else { return false }
-        return entries.contains { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true }
+        ) else {
+            hasSubfoldersCache[playlist.url] = false
+            return false
+        }
+        let result = entries.contains { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true }
+        hasSubfoldersCache[playlist.url] = result
+        return result
     }
 
     /// True if a playlist's folder is still actually there on disk — used
@@ -98,6 +121,7 @@ final class LibraryManager: ObservableObject {
     }
 
     func loadPlaylists() {
+        hasSubfoldersCache.removeAll()
         guard let currentFolder else { playlists = []; return }
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(
@@ -119,6 +143,10 @@ final class LibraryManager: ObservableObject {
     }
 
     func songs(in playlist: Playlist) -> [Song] {
+        if let cached = songsCache[playlist.url] {
+            return cached
+        }
+
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(
             at: playlist.url,
@@ -126,10 +154,16 @@ final class LibraryManager: ObservableObject {
             options: [.skipsHiddenFiles]
         ) else { return [] }
 
-        return entries
+        let result = entries
             .filter { audioExtensions.contains($0.pathExtension.lowercased()) }
             .map { Song(id: $0, url: $0) }
             .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        songsCache[playlist.url] = result
+        return result
+    }
+
+    private func invalidateSongsCache(for url: URL) {
+        songsCache[url] = nil
     }
 
     // MARK: - Playlist management
@@ -143,19 +177,33 @@ final class LibraryManager: ObservableObject {
         loadPlaylists()
     }
 
-    func rename(_ playlist: Playlist, to newName: String) {
-        guard let currentFolder else { return }
+    /// Returns the renamed playlist's new identity on success, or nil if the
+    /// rename failed — callers that track a "currently selected" playlist by
+    /// value need this to re-point their selection at the new URL, since the
+    /// old Playlist's URL no longer exists on disk after a successful rename.
+    @discardableResult
+    func rename(_ playlist: Playlist, to newName: String) -> Playlist? {
+        guard let currentFolder else { return nil }
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else { return nil }
         let newURL = currentFolder.appendingPathComponent(trimmed)
-        try? FileManager.default.moveItem(at: playlist.url, to: newURL)
+        var renamed: Playlist?
+        do {
+            try FileManager.default.moveItem(at: playlist.url, to: newURL)
+            invalidateSongsCache(for: playlist.url)
+            renamed = Playlist(id: newURL, url: newURL)
+        } catch {
+            errorMessage = "Couldn't rename \"\(playlist.name)\" to \"\(trimmed)\" — a folder with that name may already exist."
+        }
         loadPlaylists()
+        return renamed
     }
 
     func delete(_ playlist: Playlist) {
         // Moves to Trash rather than permanently deleting — safer, and it's
         // just the folder of aliases/files being removed, not your real music.
         try? FileManager.default.trashItem(at: playlist.url, resultingItemURL: nil)
+        invalidateSongsCache(for: playlist.url)
         loadPlaylists()
     }
 
@@ -180,6 +228,7 @@ final class LibraryManager: ObservableObject {
         for url in urls {
             addAlias(for: url, in: playlist)
         }
+        invalidateSongsCache(for: playlist.url)
         objectWillChange.send()
     }
 
@@ -187,7 +236,31 @@ final class LibraryManager: ObservableObject {
     /// the original file it points to is completely untouched).
     func removeSong(_ song: Song) {
         try? FileManager.default.trashItem(at: song.url, resultingItemURL: nil)
+        invalidateSongsCache(for: song.url.deletingLastPathComponent())
         objectWillChange.send()
+    }
+
+    /// Accepts file URLs dragged in from Finder and adds them to a playlist
+    /// as aliases. Shared by both the sidebar's playlist row and the open
+    /// song list, so dropping files works the same way in either place.
+    func handleFileDrop(providers: [NSItemProvider], into playlist: Playlist) -> Bool {
+        var didAccept = false
+        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            didAccept = true
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { [weak self] item, _ in
+                var url: URL?
+                if let data = item as? Data {
+                    url = URL(dataRepresentation: data, relativeTo: nil)
+                } else if let directURL = item as? URL {
+                    url = directURL
+                }
+                guard let url else { return }
+                DispatchQueue.main.async {
+                    self?.addSongs(urls: [url], to: playlist)
+                }
+            }
+        }
+        return didAccept
     }
 
     private func addAlias(for sourceURL: URL, in playlist: Playlist) {

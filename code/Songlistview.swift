@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-enum SongViewMode {
+enum SongViewMode: String {
     case list, tile
 }
 
@@ -79,18 +79,44 @@ struct SongListView: View {
     @EnvironmentObject private var player: AudioPlayerManager
     @EnvironmentObject private var metadataStore: SongMetadataStore
     @EnvironmentObject private var edits: MetadataEditsStore
+    @EnvironmentObject private var uiState: UIState
     let playlist: Playlist
 
     @State private var searchText = ""
-    @State private var viewMode: SongViewMode = .list
+    @FocusState private var isSearchFocused: Bool
+    // View mode, visible columns, and column order are structural
+    // preferences independent of any one playlist's content, so they're
+    // persisted via @AppStorage and survive relaunches. Column *widths*
+    // stay as plain @State below — those are deliberately auto-fit to each
+    // playlist's own content (see the .task in listView(songs:)), so
+    // persisting them would fight that existing behavior.
+    @AppStorage("songListViewMode") private var viewMode: SongViewMode = .list
+    @AppStorage("songListColumnOrder") private var columnOrderRaw: String = OptionalColumn.allCases.map(\.rawValue).joined(separator: ",")
+    @AppStorage("songListVisibleColumns") private var visibleColumnsRaw: String = OptionalColumn.allCases.map(\.rawValue).joined(separator: ",")
     @State private var sortColumn: SongSortColumn?
     @State private var sortAscending = true
     @State private var editingSong: Song?
     @State private var draggedSong: Song?
     @State private var draggedColumn: OptionalColumn?
-    @State private var visibleColumns: Set<OptionalColumn> = Set(OptionalColumn.allCases)
+
+    // Read-only: SongListView is a value-type View, so a computed property
+    // with its own setter can't be mutated from `body` or from ordinary
+    // (non-mutating) methods called from it. Instead, mutation sites below
+    // compute a new value locally and assign straight to the @AppStorage-
+    // backed raw string, which — like @State — supports that from a
+    // non-mutating context.
+    private var visibleColumns: Set<OptionalColumn> {
+        Set(visibleColumnsRaw.split(separator: ",").compactMap { OptionalColumn(rawValue: String($0)) })
+    }
+
     /// The display order of optional columns — drag a header to reorder.
-    @State private var columnOrder: [OptionalColumn] = OptionalColumn.allCases
+    private var columnOrder: [OptionalColumn] {
+        let saved = columnOrderRaw.split(separator: ",").compactMap { OptionalColumn(rawValue: String($0)) }
+        // Any case missing from a saved preference (e.g. added after
+        // that preference was first written) still needs to show up.
+        let missing = OptionalColumn.allCases.filter { !saved.contains($0) }
+        return saved + missing
+    }
 
     @State private var titleColumnWidth: CGFloat = 220
     @State private var artistColumnWidth: CGFloat = 130
@@ -118,7 +144,17 @@ struct SongListView: View {
                 tileView(songs: songs)
             }
         }
+        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            library.handleFileDrop(providers: providers, into: playlist)
+        }
         .searchable(text: $searchText, prompt: "Search songs")
+        .searchFocused($isSearchFocused)
+        .onChange(of: isSearchFocused) {
+            uiState.isTextInputActive = isSearchFocused
+        }
+        .onDisappear {
+            uiState.isTextInputActive = false
+        }
         .navigationTitle(playlist.name)
         .toolbar {
             ToolbarItem {
@@ -135,11 +171,13 @@ struct SongListView: View {
                     Menu {
                         ForEach(columnOrder) { column in
                             Button {
-                                if visibleColumns.contains(column) {
-                                    visibleColumns.remove(column)
+                                var current = visibleColumns
+                                if current.contains(column) {
+                                    current.remove(column)
                                 } else {
-                                    visibleColumns.insert(column)
+                                    current.insert(column)
                                 }
+                                visibleColumnsRaw = current.map(\.rawValue).joined(separator: ",")
                             } label: {
                                 HStack {
                                     if visibleColumns.contains(column) {
@@ -271,7 +309,7 @@ struct SongListView: View {
             // itself — so nothing truncates, but nothing grows bigger than
             // it needs to either.
             try? await Task.sleep(nanoseconds: 400_000_000)
-            titleColumnWidth = idealWidth(for: songs.map { displayTitle(for: $0) } + ["Title"], min: 100, max: 700)
+            titleColumnWidth = idealWidth(for: songs.map { $0.displayTitle(edits: edits, metadataStore: metadataStore) } + ["Title"], min: 100, max: 700)
             for column in OptionalColumn.allCases {
                 let values = songs.map { cellText(for: column, song: $0) } + [column.rawValue]
                 let range = column.widthRange
@@ -319,8 +357,8 @@ struct SongListView: View {
     private func cellText(for column: OptionalColumn, song: Song) -> String {
         let meta = metadataStore.metadata(for: song)
         switch column {
-        case .artist: return displayArtist(for: song)
-        case .album: return displayAlbum(for: song)
+        case .artist: return song.displayArtist(edits: edits, metadataStore: metadataStore)
+        case .album: return song.displayAlbum(edits: edits, metadataStore: metadataStore)
         case .duration: return formatDuration(meta?.duration)
         case .bitrate: return formatBitrate(meta?.bitrateKbps)
         case .format: return song.url.pathExtension.uppercased()
@@ -334,10 +372,12 @@ struct SongListView: View {
 
     /// Moves a dropped column to sit where it was dropped.
     private func reorderColumns(dragged: OptionalColumn, onto target: OptionalColumn) {
-        guard let fromIndex = columnOrder.firstIndex(of: dragged),
-              let toIndex = columnOrder.firstIndex(of: target) else { return }
-        let moved = columnOrder.remove(at: fromIndex)
-        columnOrder.insert(moved, at: toIndex)
+        var order = columnOrder
+        guard let fromIndex = order.firstIndex(of: dragged),
+              let toIndex = order.firstIndex(of: target) else { return }
+        let moved = order.remove(at: fromIndex)
+        order.insert(moved, at: toIndex)
+        columnOrderRaw = order.map(\.rawValue).joined(separator: ",")
     }
 
     private var headerRow: some View {
@@ -450,7 +490,7 @@ struct SongListView: View {
             }
             .frame(width: 38)
 
-            MarqueeText(text: displayTitle(for: song), size: 13, alignment: .leading)
+            MarqueeText(text: song.displayTitle(edits: edits, metadataStore: metadataStore), size: 13, alignment: .leading)
                 .frame(width: titleColumnWidth, alignment: .leading)
             Color.clear.frame(width: 9)
 
@@ -500,11 +540,15 @@ struct SongListView: View {
     }
 
     /// Moves the dragged song to sit right where it was dropped, and
-    /// persists the new order.
+    /// persists the new order. Uses the full, unfiltered playlist order (not
+    /// just whatever's currently visible under a search filter) so that
+    /// reordering while searching doesn't drop every non-matching song from
+    /// the saved order.
     private func reorder(dragged: Song, onto target: Song, in songs: [Song]) {
-        guard let fromIndex = songs.firstIndex(of: dragged),
-              let toIndex = songs.firstIndex(of: target) else { return }
-        var order = songs.map { $0.url.lastPathComponent }
+        let full = orderedSongs(library.songs(in: playlist))
+        guard let fromIndex = full.firstIndex(of: dragged),
+              let toIndex = full.firstIndex(of: target) else { return }
+        var order = full.map { $0.url.lastPathComponent }
         let moved = order.remove(at: fromIndex)
         order.insert(moved, at: toIndex)
         library.saveCustomOrder(order, for: playlist)
@@ -542,10 +586,10 @@ struct SongListView: View {
                     }
                 }
 
-            Text(displayTitle(for: song))
+            Text(song.displayTitle(edits: edits, metadataStore: metadataStore))
                 .appCaptionFont()
                 .lineLimit(1)
-            Text(displayArtist(for: song))
+            Text(song.displayArtist(edits: edits, metadataStore: metadataStore))
                 .appCaption2Font()
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -565,7 +609,7 @@ struct SongListView: View {
 
     @ViewBuilder
     private func artworkView(for song: Song) -> some View {
-        if let artwork = effectiveArtwork(for: song) {
+        if let artwork = song.effectiveArtwork(edits: edits, metadataStore: metadataStore) {
             Image(nsImage: artwork)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
@@ -618,33 +662,38 @@ struct SongListView: View {
     // MARK: - Ordering, filtering, formatting
 
     private var displayedSongs: [Song] {
-        let base = library.songs(in: playlist)
-        let searched = searchText.isEmpty
-            ? base
-            : base.filter { displayTitle(for: $0).localizedCaseInsensitiveContains(searchText) }
+        let ordered = orderedSongs(library.songs(in: playlist))
+        guard !searchText.isEmpty else { return ordered }
+        return ordered.filter { $0.displayTitle(edits: edits, metadataStore: metadataStore).localizedCaseInsensitiveContains(searchText) }
+    }
 
+    /// Applies the current sort column, or the saved custom order, to the
+    /// full (unfiltered) song list. Kept separate from search filtering so
+    /// drag-to-reorder can compute positions against the complete playlist
+    /// even while a search is active.
+    private func orderedSongs(_ base: [Song]) -> [Song] {
         if let sortColumn {
-            return sorted(searched, by: sortColumn, ascending: sortAscending)
+            return sorted(base, by: sortColumn, ascending: sortAscending)
         }
 
         if let order = library.customOrder(for: playlist) {
             let indexMap = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($1, $0) })
-            return searched.sorted {
+            return base.sorted {
                 (indexMap[$0.url.lastPathComponent] ?? Int.max) < (indexMap[$1.url.lastPathComponent] ?? Int.max)
             }
         }
-        return searched
+        return base
     }
 
     private func sorted(_ songs: [Song], by column: SongSortColumn, ascending: Bool) -> [Song] {
         let result = songs.sorted { a, b in
             switch column {
             case .title:
-                return displayTitle(for: a).localizedCaseInsensitiveCompare(displayTitle(for: b)) == .orderedAscending
+                return a.displayTitle(edits: edits, metadataStore: metadataStore).localizedCaseInsensitiveCompare(b.displayTitle(edits: edits, metadataStore: metadataStore)) == .orderedAscending
             case .artist:
-                return displayArtist(for: a).localizedCaseInsensitiveCompare(displayArtist(for: b)) == .orderedAscending
+                return a.displayArtist(edits: edits, metadataStore: metadataStore).localizedCaseInsensitiveCompare(b.displayArtist(edits: edits, metadataStore: metadataStore)) == .orderedAscending
             case .album:
-                return displayAlbum(for: a).localizedCaseInsensitiveCompare(displayAlbum(for: b)) == .orderedAscending
+                return a.displayAlbum(edits: edits, metadataStore: metadataStore).localizedCaseInsensitiveCompare(b.displayAlbum(edits: edits, metadataStore: metadataStore)) == .orderedAscending
             case .duration:
                 return (metadataStore.metadata(for: a)?.duration ?? 0) < (metadataStore.metadata(for: b)?.duration ?? 0)
             case .bitrate:
@@ -666,29 +715,6 @@ struct SongListView: View {
             }
         }
         return ascending ? result : result.reversed()
-    }
-
-    private func displayTitle(for song: Song) -> String {
-        if let t = edits.edit(for: song)?.title, !t.isEmpty { return t.normalizedForDisplay }
-        if let t = metadataStore.metadata(for: song)?.title, !t.isEmpty { return t.normalizedForDisplay }
-        return song.title.normalizedForDisplay
-    }
-
-    private func displayArtist(for song: Song) -> String {
-        if let a = edits.edit(for: song)?.artist, !a.isEmpty { return a.normalizedForDisplay }
-        return (metadataStore.metadata(for: song)?.artist ?? "").normalizedForDisplay
-    }
-
-    private func displayAlbum(for song: Song) -> String {
-        if let a = edits.edit(for: song)?.album, !a.isEmpty { return a.normalizedForDisplay }
-        return (metadataStore.metadata(for: song)?.album ?? "").normalizedForDisplay
-    }
-
-    private func effectiveArtwork(for song: Song) -> NSImage? {
-        if let data = edits.edit(for: song)?.artworkData, let image = NSImage(data: data) {
-            return image
-        }
-        return metadataStore.metadata(for: song)?.artwork
     }
 
     private func formatDuration(_ seconds: TimeInterval?) -> String {

@@ -5,6 +5,7 @@ struct MenuBarPlayerView: View {
     @EnvironmentObject private var player: AudioPlayerManager
     @EnvironmentObject private var metadataStore: SongMetadataStore
     @EnvironmentObject private var edits: MetadataEditsStore
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -15,7 +16,7 @@ struct MenuBarPlayerView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 8))
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(displayTitle(for: song))
+                        Text(song.displayTitle(edits: edits, metadataStore: metadataStore))
                             .appHeadlineFont()
                             .lineLimit(1)
                         if let artist = metadataStore.metadata(for: song)?.artist, !artist.isEmpty {
@@ -54,7 +55,7 @@ struct MenuBarPlayerView: View {
                     PlayerControlButton(
                         systemImage: player.repeatMode == .one ? "repeat.1" : "repeat",
                         isActive: player.repeatMode != .off,
-                        tooltip: repeatTooltip
+                        tooltip: player.repeatMode.tooltip
                     ) {
                         player.cycleRepeatMode()
                     }
@@ -77,7 +78,14 @@ struct MenuBarPlayerView: View {
 
             Button {
                 NSApp.activate(ignoringOtherApps: true)
-                NSApp.windows.first(where: { $0.isVisible })?.makeKeyAndOrderFront(nil)
+                // If the main window was closed entirely, there's no
+                // visible window to bring forward — open a fresh one
+                // instead of silently doing nothing.
+                if let window = NSApp.windows.first(where: { $0.isVisible }) {
+                    window.makeKeyAndOrderFront(nil)
+                } else {
+                    openWindow(id: "main")
+                }
             } label: {
                 Text("Open MusicLibrary")
             }
@@ -95,7 +103,7 @@ struct MenuBarPlayerView: View {
 
     @ViewBuilder
     private func artworkView(for song: Song) -> some View {
-        if let artwork = effectiveArtwork(for: song) {
+        if let artwork = song.effectiveArtwork(edits: edits, metadataStore: metadataStore) {
             Image(nsImage: artwork)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
@@ -106,28 +114,6 @@ struct MenuBarPlayerView: View {
                     Image(systemName: "music.note")
                         .foregroundStyle(.secondary)
                 }
-        }
-    }
-
-    private func displayTitle(for song: Song) -> String {
-        if let t = edits.edit(for: song)?.title, !t.isEmpty { return t.normalizedForDisplay }
-        let tagTitle = metadataStore.metadata(for: song)?.title
-        if let tagTitle, !tagTitle.isEmpty { return tagTitle.normalizedForDisplay }
-        return song.title.normalizedForDisplay
-    }
-
-    private func effectiveArtwork(for song: Song) -> NSImage? {
-        if let data = edits.edit(for: song)?.artworkData, let image = NSImage(data: data) {
-            return image
-        }
-        return metadataStore.metadata(for: song)?.artwork
-    }
-
-    private var repeatTooltip: String {
-        switch player.repeatMode {
-        case .off: return "Repeat"
-        case .all: return "Repeat All"
-        case .one: return "Repeat One"
         }
     }
 }
