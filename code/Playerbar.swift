@@ -135,7 +135,7 @@ private struct PlayerProgressBar: View {
                 ),
                 in: 0...max(player.duration, 1)
             )
-            .animation(.linear(duration: 0.02), value: clock.currentTime)
+            .animation(.linear(duration: 0.1), value: clock.currentTime)
             .help("Seek")
 
             Text(formatTime(player.duration))

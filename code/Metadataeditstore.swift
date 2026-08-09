@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import Combine
 
 struct SongEdit: Codable {
@@ -19,6 +20,11 @@ struct SongEdit: Codable {
 final class MetadataEditsStore: ObservableObject {
     @Published private(set) var edits: [String: SongEdit] = [:]
     private let fileURL: URL
+    /// Decoding a JPEG/PNG from Data on every access (every row render, every
+    /// scroll frame) was showing up as unnecessary CPU work — this caches
+    /// the decoded image per song so it only happens once until the artwork
+    /// actually changes.
+    private var decodedArtworkCache: [String: NSImage] = [:]
 
     init() {
         let supportDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -34,13 +40,28 @@ final class MetadataEditsStore: ObservableObject {
         edits[song.playbackURL.path]
     }
 
+    /// Decoded custom artwork for this song, if any edit set it — cached
+    /// after the first decode.
+    func artwork(for song: Song) -> NSImage? {
+        let path = song.playbackURL.path
+        guard let data = edits[path]?.artworkData else { return nil }
+        if let cached = decodedArtworkCache[path] {
+            return cached
+        }
+        let image = NSImage(data: data)
+        decodedArtworkCache[path] = image
+        return image
+    }
+
     func save(title: String, artist: String, album: String, artworkData: Data?, for song: Song) {
-        var current = edits[song.playbackURL.path] ?? SongEdit()
+        let path = song.playbackURL.path
+        var current = edits[path] ?? SongEdit()
         current.title = title
         current.artist = artist
         current.album = album
         current.artworkData = artworkData
-        edits[song.playbackURL.path] = current
+        edits[path] = current
+        decodedArtworkCache[path] = nil
         persist()
     }
 

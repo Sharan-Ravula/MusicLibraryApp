@@ -23,7 +23,7 @@ extension Song {
     }
 
     func effectiveArtwork(edits: MetadataEditsStore, metadataStore: SongMetadataStore) -> NSImage? {
-        if let data = edits.edit(for: self)?.artworkData, let image = NSImage(data: data) {
+        if let image = edits.artwork(for: self) {
             return image
         }
         return metadataStore.metadata(for: self)?.artwork

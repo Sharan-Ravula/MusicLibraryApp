@@ -93,9 +93,11 @@ final class AudioPlayerManager: NSObject, ObservableObject {
         if player.isPlaying {
             player.pause()
             isPlaying = false
+            stopTimer()
         } else {
             player.play()
             isPlaying = true
+            startTimer()
         }
         updateNowPlayingInfo()
     }
@@ -103,6 +105,7 @@ final class AudioPlayerManager: NSObject, ObservableObject {
     func stop() {
         player?.pause()
         isPlaying = false
+        stopTimer()
         updateNowPlayingInfo()
     }
 
@@ -286,14 +289,26 @@ final class AudioPlayerManager: NSObject, ObservableObject {
 
     private func startTimer() {
         timer?.invalidate()
-        // 50 updates/sec, paired with a matching short linear animation on
-        // the slider itself, for genuinely smooth motion instead of visible steps.
-        timer = Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { _ in
-            Task { @MainActor [weak self] in
+        // 10 updates/sec, paired with a matching linear animation on the
+        // slider itself, is smooth enough to look continuous without the
+        // CPU cost of the 50/sec rate this used to run at (which also never
+        // got invalidated on pause, so it kept ticking — and re-rendering
+        // the progress bar — indefinitely even while nothing was playing).
+        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            // Timer is scheduled from this MainActor-isolated method, so it
+            // always fires on the main thread — assumeIsolated avoids
+            // spinning up a new Task 10x/sec just to hop back to an actor
+            // we're already on.
+            MainActor.assumeIsolated {
                 guard let self, let player = self.player else { return }
                 self.clock.currentTime = player.currentTime
             }
         }
+    }
+
+    private func stopTimer() {
+        timer?.invalidate()
+        timer = nil
     }
 
     // MARK: - Hardware media keys / Control Center "Now Playing"
