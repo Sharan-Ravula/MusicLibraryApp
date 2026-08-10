@@ -128,14 +128,10 @@ private struct PlayerProgressBar: View {
                 .monospacedDigit()
                 .frame(width: 34, alignment: .trailing)
 
-            Slider(
-                value: Binding(
-                    get: { clock.currentTime },
-                    set: { player.seek(to: $0) }
-                ),
-                in: 0...max(player.duration, 1)
+            PlaybackScrubber(
+                progress: player.duration > 0 ? clock.currentTime / player.duration : 0,
+                onSeek: { fraction in player.seek(to: fraction * player.duration) }
             )
-            .animation(.linear(duration: 0.1), value: clock.currentTime)
             .help("Seek")
 
             Text(formatTime(player.duration))

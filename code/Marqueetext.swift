@@ -40,6 +40,15 @@ struct MarqueeText: View {
                 // actually overflows — otherwise it should sit centered like
                 // any normal short title, not hug the left edge.
                 .frame(width: geo.size.width, alignment: overflows ? .leading : alignment)
+                // Flattens everything above into a single pre-rendered layer
+                // *before* the animated offset is applied, so the infinite
+                // back-and-forth scroll (autoScroll mode never stops
+                // animating while a song plays) only has to reposition a
+                // bitmap each frame instead of re-running SwiftUI's layout
+                // engine on the whole window — that mismatch was showing up
+                // as sustained ~55%+ CPU for the entire time a song with an
+                // overflowing title was playing.
+                .drawingGroup()
                 .offset(x: offsetX)
                 .animation(animation, value: scrolled)
                 .onAppear {

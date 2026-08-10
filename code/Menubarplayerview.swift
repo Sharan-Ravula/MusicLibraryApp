@@ -131,14 +131,11 @@ private struct MenuBarProgressBar: View {
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
 
-            Slider(
-                value: Binding(
-                    get: { clock.currentTime },
-                    set: { player.seek(to: $0) }
-                ),
-                in: 0...max(player.duration, 1)
+            // Custom-drawn, not a native Slider — see PlaybackScrubber for why.
+            PlaybackScrubber(
+                progress: player.duration > 0 ? clock.currentTime / player.duration : 0,
+                onSeek: { fraction in player.seek(to: fraction * player.duration) }
             )
-            .animation(.linear(duration: 0.02), value: clock.currentTime)
 
             Text(formatTime(player.duration))
                 .appCaption2Font()
