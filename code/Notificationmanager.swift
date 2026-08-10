@@ -22,23 +22,43 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func notifyNowPlaying(title: String, artist: String? = nil, artwork: NSImage? = nil) {
-        let content = UNMutableNotificationContent()
-        content.title = "Now Playing"
-        content.body = artist.map { "\(title) — \($0)" } ?? title
-        // No sound here — it would layer an alert sound on top of the music itself.
+        // Encoding artwork into a notification attachment means a full
+        // TIFF->JPEG re-encode (of the same full-resolution image used for
+        // on-screen display) plus a disk write — done synchronously on the
+        // main thread, this was a real CPU spike/hitch every time a song
+        // changed. None of it needs to block playback, so it all moves to a
+        // background task.
+        Task.detached(priority: .utility) {
+            let content = UNMutableNotificationContent()
+            content.title = "Now Playing"
+            content.body = artist.map { "\(title) — \($0)" } ?? title
+            // No sound here — it would layer an alert sound on top of the music itself.
 
-        if let artwork, let attachment = attachment(from: artwork) {
-            content.attachments = [attachment]
+            if let artwork, let attachment = Self.attachment(from: artwork) {
+                content.attachments = [attachment]
+            }
+
+            let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+            try? await UNUserNotificationCenter.current().add(request)
         }
-
-        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
     }
 
-    private func attachment(from image: NSImage) -> UNNotificationAttachment? {
-        guard let tiffData = image.tiffRepresentation,
+    private static func attachment(from image: NSImage) -> UNNotificationAttachment? {
+        // The notification banner only ever shows this at thumbnail size —
+        // downscaling before encoding cuts the JPEG encode and disk-write
+        // cost regardless of the original artwork's resolution.
+        let maxDimension: CGFloat = 200
+        let scale = min(1, maxDimension / max(image.size.width, image.size.height, 1))
+        let targetSize = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+
+        let thumbnail = NSImage(size: targetSize)
+        thumbnail.lockFocus()
+        image.draw(in: NSRect(origin: .zero, size: targetSize))
+        thumbnail.unlockFocus()
+
+        guard let tiffData = thumbnail.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiffData),
-              let jpegData = bitmap.representation(using: .jpeg, properties: [:])
+              let jpegData = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8])
         else { return nil }
 
         let fileURL = FileManager.default.temporaryDirectory
