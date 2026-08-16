@@ -2,6 +2,13 @@
 
 A native macOS music player built with SwiftUI. Your music library is just folders on disk — every subfolder in your chosen library folder is a playlist, and songs are added as **aliases (symlinks)**, never copies, so nothing is duplicated on disk and one song can live in multiple playlists at once.
 
+## Screenshots
+
+| | |
+|---|---|
+| ![Main library view: sidebar with playlists, sortable song table, and player bar](UI-Overview/Musiclibrary-overview.png) Main window — sidebar, sortable song table, player bar | ![Continue Playing queue panel open alongside the song list](UI-Overview/continue-playing.png) "Continue Playing" queue panel |
+| ![Tile/grid view of a playlist's songs](UI-Overview/tile-list-version.png) Tile/grid view | ![Theme picker with 11 color themes and a text size slider](UI-Overview/themes.png) Theme picker & text size |
+
 ## Features
 
 **Library & Playlists**
@@ -67,7 +74,7 @@ The project is already configured with **App Sandbox → File Access → User Se
 
 1. Create a new **macOS App** project in Xcode (SwiftUI interface)
 2. Delete the default `ContentView.swift`
-3. Add all `.swift` files from this repo's `Code/` folder to the project
+3. Add all `.swift` files from this repo's `MusicLibrary/` folder to the project
 4. Set minimum deployment target to macOS 13.0
 5. Enable **App Sandbox** with **User Selected File: Read/Write** under Signing & Capabilities
 
@@ -87,41 +94,18 @@ The project is already configured with **App Sandbox → File Access → User Se
    ```
 3. Double-click any song to play it
 
-## Files to Upload
+## Repository Structure
 
 ```
 MusicLibrary/
 ├── README.md
 ├── .gitignore
+├── UI-Overview/            screenshots used in this README
 ├── MusicLibrary.xcodeproj/
-└── Code/
-    ├── MusicLibraryApp.swift
-    ├── ContentView.swift
-    ├── Models.swift
-    ├── LibraryManager.swift
-    ├── AudioPlayerManager.swift
-    ├── PlaybackClock.swift
-    ├── SongMetadataStore.swift
-    ├── MetadataEditsStore.swift
-    ├── SongListView.swift
-    ├── SongEditSheet.swift
-    ├── PlayerBar.swift
-    ├── QueueView.swift
-    ├── MenuBarPlayerView.swift
-    ├── MarqueeText.swift
-    ├── ColumnResizeHandle.swift
-    ├── PlayerControlButton.swift
-    ├── BadgedIcon.swift
-    ├── AlwaysShowsScrollbar.swift
-    ├── String+Normalize.swift
-    ├── NotificationManager.swift
-    ├── AppSettings.swift
-    ├── AppFontScale.swift
-    ├── PreferencesView.swift
-    └── UIState.swift
+└── MusicLibrary/           app source — every .swift file below, plus Assets.xcassets
 ```
 
-`MusicLibrary.xcodeproj` is a folder Xcode manages for you — just drag the whole thing into GitHub Desktop or your git client as-is, don't reach inside it. That's every `.swift` file (24 total), grouped in `Code/`, plus the project file, a `.gitignore` (keeps Xcode's local build junk out of the repo), and this README.
+`MusicLibrary.xcodeproj` is a folder Xcode manages for you — don't reach inside it, git tracks it as-is. The `.gitignore` keeps Xcode's local build junk out of the repo.
 
 ## Project Structure
 
@@ -132,25 +116,27 @@ MusicLibrary/
 | `Models.swift` | `Song` and `Playlist` data models |
 | `LibraryManager.swift` | Folder scanning and navigation, playlist CRUD, alias creation, security-scoped bookmarks |
 | `AudioPlayerManager.swift` | Playback engine, queue management, media key integration |
-| `PlaybackClock.swift` | Isolated fast-ticking playback position (keeps the rest of the UI from re-rendering on every tick) |
-| `SongMetadataStore.swift` | Reads and caches ID3/metadata tags, artwork, duration, bitrate |
-| `MetadataEditsStore.swift` | In-app metadata/artwork overrides |
-| `SongListView.swift` | Sortable/resizable song table + tile grid view |
-| `SongEditSheet.swift` | Edit title/artist/album/artwork sheet |
-| `PlayerBar.swift` | Bottom transport bar |
-| `QueueView.swift` | "Continue Playing" panel |
-| `MenuBarPlayerView.swift` | Menu bar mini player |
-| `MarqueeText.swift` | Scrolling text for overflowing titles |
-| `ColumnResizeHandle.swift` | Draggable resize handle (table columns, queue panel) |
-| `PlayerControlButton.swift` | Reusable hover-highlighted icon button with tooltip |
-| `BadgedIcon.swift` | Base icon + small "+" badge, for actions with no matching built-in SF Symbol |
-| `AlwaysShowsScrollbar.swift` | Bridges to AppKit to force a specific scroll view's scrollbar to stay visible |
-| `String+Normalize.swift` | Normalizes stylized/"fancy" Unicode text back to plain characters for display |
-| `NotificationManager.swift` | Now-playing system notifications with artwork |
-| `AppSettings.swift` | Font scale and theme settings |
-| `AppFontScale.swift` | App-wide font scaling system |
-| `PreferencesView.swift` | Theme picker (toolbar button or Cmd+,) |
-| `UIState.swift` | Shared UI toggle state (queue panel visibility) |
+| `Playbackclock.swift` | Isolated fast-ticking playback position (keeps the rest of the UI from re-rendering on every tick) |
+| `Songmetadatastore.swift` | Reads and caches ID3/metadata tags, artwork, duration, bitrate |
+| `Metadataeditstore.swift` | In-app metadata/artwork overrides |
+| `Song+display.swift` | Shared title/artist/album/artwork resolution (edit override → file tag → filename fallback) used by every view |
+| `Songlistview.swift` | Sortable/resizable song table + tile grid view |
+| `Songeditsheet.swift` | Edit title/artist/album/artwork sheet |
+| `Playerbar.swift` | Bottom transport bar |
+| `PlaybackScrubber.swift` | Custom-drawn playback seek bar (lighter-weight than a native `Slider` for a value that updates several times a second) |
+| `Queueview.swift` | "Continue Playing" panel |
+| `Menubarplayerview.swift` | Menu bar mini player |
+| `Marqueetext.swift` | Scrolling text for overflowing titles |
+| `Columnsizehandle.swift` | Draggable resize handle (table columns, queue panel) |
+| `Playercontrolbutton.swift` | Reusable hover-highlighted icon button with tooltip |
+| `Badgedicon.swift` | Base icon + small "+" badge, for actions with no matching built-in SF Symbol |
+| `Alwaysshowscrollbar.swift` | Bridges to AppKit to force a specific scroll view's scrollbar to stay visible |
+| `String+normalize.swift` | Normalizes stylized/"fancy" Unicode text back to plain characters for display |
+| `Notificationmanager.swift` | Now-playing system notifications with artwork |
+| `Appsettings.swift` | Font scale and theme settings |
+| `Appfontscale.swift` | App-wide font scaling system |
+| `Preferencesview.swift` | Theme picker (toolbar button or Cmd+,) |
+| `UiState.swift` | Shared UI toggle state (queue panel visibility, text-input focus) |
 
 ## Known Limitations
 
